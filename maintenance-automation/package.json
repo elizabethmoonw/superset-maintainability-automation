@@ -6,16 +6,21 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "jest",
     "scan": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers",
     "scan:all": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --include files,exports,types,enumMembers",
-    "scan:prod": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers"
+    "scan:prod": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers",
+    "scan:production": "npm run build && node dist/cli.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",
+    "jest": "^29.0.0",
     "knip": "6.31.0",
+    "ts-jest": "^29.0.0",
     "typescript": "^5.0.0"
   }
 }
