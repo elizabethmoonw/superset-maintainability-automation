@@ -292,7 +292,10 @@ function captureRawKnipOutput(
 ): string {
   console.log(`Capturing raw Knip output for ${scanMode} mode...`);
 
-  const scanDefinition = getScanDefinition(scanMode as ScanMode);
+  const scanDefinition = {
+    ...getScanDefinition(validateMode(scanMode)),
+    configFile,
+  };
   const command = buildKnipCommand(scanDefinition);
 
   let stdout: string;

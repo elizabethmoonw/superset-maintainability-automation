@@ -75,7 +75,8 @@ function derivePathComponents(filePath: string): {
 
   // Extract extension
   const lastDotIndex = fileName.lastIndexOf(".");
-  const fileExtension = lastDotIndex !== -1 ? fileName.slice(lastDotIndex + 1) : "";
+  const fileExtension =
+    lastDotIndex !== -1 ? fileName.slice(lastDotIndex + 1) : "";
 
   // Normalize path (remove leading ./ if present)
   const normalizedPath = filePath.replace(/^\.\//, "");
@@ -87,7 +88,9 @@ export function parseKnipReport(report: KnipReport): NormalizedFinding[] {
   const findings: NormalizedFinding[] = [];
 
   for (const issue of report.issues) {
-    const { normalizedPath, fileName, fileExtension } = derivePathComponents(issue.file);
+    const { normalizedPath, fileName, fileExtension } = derivePathComponents(
+      issue.file,
+    );
 
     // Process files
     for (const fileIssue of issue.files || []) {
@@ -148,7 +151,7 @@ export function parseKnipReport(report: KnipReport): NormalizedFinding[] {
         fileExtension,
         filePath: issue.file,
         issueType: "enumMembers",
-        symbolName: enumMemberIssue.name,
+        symbolName: `${enumMemberIssue.namespace}.${enumMemberIssue.name}`,
         line: enumMemberIssue.line,
         col: enumMemberIssue.col,
       };

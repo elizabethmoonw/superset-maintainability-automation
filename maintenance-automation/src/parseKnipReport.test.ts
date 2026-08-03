@@ -265,7 +265,40 @@ test("issue type processing: processes enumMembers issue type with symbol info",
   const results = parseKnipReport(report);
   expect(results).toHaveLength(1);
   expect(results[0].issueType).toBe("enumMembers");
-  expect(results[0].symbolName).toBe("Primary");
+  expect(results[0].symbolName).toBe("ButtonEnum.Primary");
+});
+
+test("issue type processing: preserves enum namespace in finding identity", () => {
+  const report: KnipReport = {
+    issues: [
+      {
+        file: "src/components/Button.tsx",
+        enumMembers: [
+          {
+            namespace: "ButtonSize",
+            name: "Default",
+            line: 20,
+            col: 3,
+            pos: 1234,
+          },
+          {
+            namespace: "ButtonStyle",
+            name: "Default",
+            line: 30,
+            col: 3,
+            pos: 2345,
+          },
+        ],
+      },
+    ],
+  };
+
+  const results = parseKnipReport(report);
+
+  expect(results.map((finding) => finding.symbolName)).toEqual([
+    "ButtonSize.Default",
+    "ButtonStyle.Default",
+  ]);
 });
 
 test("issue type processing: processes multiple symbols in one file", () => {
@@ -430,7 +463,9 @@ test("realistic Knip report fixture: processes realistic Knip output correctly",
 
   // Check specific accepted enum members
   const endsWithEnum = results.find(
-    (f) => f.symbolName === "EndsWith" && f.issueType === "enumMembers",
+    (f) =>
+      f.symbolName === "ListViewFilterOperator.EndsWith" &&
+      f.issueType === "enumMembers",
   );
   expect(endsWithEnum).toBeDefined();
   expect(endsWithEnum?.normalizedPath).toBe("src/components/ListView/types.ts");
