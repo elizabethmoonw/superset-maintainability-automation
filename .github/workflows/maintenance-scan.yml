@@ -127,7 +127,7 @@ jobs:
             const pages = github.paginate.iterator(github.rest.issues.listForRepo, {
               owner,
               repo,
-              state: 'all',
+              state: 'open',
               labels: labelName,
               sort: 'created',
               direction: 'desc',
@@ -151,7 +151,6 @@ jobs:
                 issue_number: existing.number,
                 title,
                 body,
-                labels: [labelName],
               });
               core.setOutput('issue-url', existing.html_url);
               core.setOutput('operation', 'updated');
