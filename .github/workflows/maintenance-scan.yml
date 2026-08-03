@@ -51,7 +51,7 @@ jobs:
       - name: Run both scans and prepare batch
         working-directory: maintenance-automation
         env:
-          MAINTENANCE_ARTIFACT_NAME: maintenance-scan-${{ github.run_id }}
+          MAINTENANCE_ARTIFACT_NAME: maintenance-scan-${{ github.run_id }}-${{ github.run_attempt }}
           MAINTENANCE_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: npm run workflow:prepare
 
