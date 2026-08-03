@@ -26,8 +26,38 @@ export const MAX_ACTIONABLE_FINDINGS = 10;
 export const EVIDENCE_NOTICE =
   "Knip findings are evidence to investigate, not approved deletions.";
 
-export type MaintenanceRunState = "awaiting-approval" | "no-action-needed";
+export type MaintenanceRunState =
+  | "scan-failed"
+  | "no-action-needed"
+  | "awaiting-approval"
+  | "approval-rejected"
+  | "devin-running"
+  | "devin-failed"
+  | "draft-pr-ready";
 export type IssueType = NormalizedFinding["issueType"];
+
+export interface TaskProgress {
+  selected: number;
+  active: number;
+  completed: number;
+  succeeded: number;
+  failed: number;
+  successRate?: number;
+  completedPerHour?: number;
+}
+
+export interface DevinRunStatus {
+  sessionId: string;
+  sessionUrl: string;
+  apiStatus: string;
+  statusDetail?: string;
+  draftPullRequestUrl?: string;
+  reused: boolean;
+  timedOut: boolean;
+  startedAt: string;
+  completedAt?: string;
+  elapsedMilliseconds: number;
+}
 
 export interface ActionableBatchFinding {
   findingKey: string;
@@ -66,6 +96,10 @@ export interface RunStatus {
   scanCounts: ScanCounts;
   batchSize: number;
   state: MaintenanceRunState;
+  issueUrl?: string;
+  failure?: string;
+  progress: TaskProgress;
+  devin?: DevinRunStatus;
   timestamps: {
     startedAt: string;
     completedAt: string;
@@ -302,6 +336,13 @@ function createRunStatus(
     },
     batchSize: batch.findings.length,
     state,
+    progress: {
+      selected: batch.findings.length,
+      active: 0,
+      completed: 0,
+      succeeded: 0,
+      failed: 0,
+    },
     timestamps: {
       startedAt: context.startedAt,
       completedAt: context.completedAt,

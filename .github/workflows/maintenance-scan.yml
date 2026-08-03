@@ -24,6 +24,9 @@ jobs:
       batch-digest: ${{ steps.metadata.outputs.batch_digest }}
       batch-size: ${{ steps.metadata.outputs.batch_size }}
       commit-sha: ${{ steps.metadata.outputs.commit_sha }}
+      existing-devin-session-id: ${{ steps.issue.outputs.existing-session-id }}
+      issue-number: ${{ steps.issue.outputs.issue-number }}
+      issue-url: ${{ steps.issue.outputs.issue-url }}
       repository: ${{ steps.metadata.outputs.repository }}
       run-id: ${{ steps.metadata.outputs.run_id }}
       state: ${{ steps.metadata.outputs.state }}
@@ -104,6 +107,10 @@ jobs:
               'maintenance-automation/reports/remediation-issue.md',
               'utf8',
             );
+            const {
+              extractPersistedSessionReference,
+              renderPersistedSessionMarker,
+            } = require('./maintenance-automation/dist/devinApi.js');
             const marker = `<!-- maintenance-scan:${status.issueDedupeKey} -->`;
             const shortSha = process.env.COMMIT_SHA.slice(0, 12);
             const shortDigest = process.env.BATCH_DIGEST.slice(0, 12);
@@ -127,7 +134,7 @@ jobs:
             const pages = github.paginate.iterator(github.rest.issues.listForRepo, {
               owner,
               repo,
-              state: 'open',
+              state: 'all',
               labels: labelName,
               sort: 'created',
               direction: 'desc',
@@ -145,14 +152,24 @@ jobs:
             }
 
             if (existing) {
+              const session = extractPersistedSessionReference(
+                existing.body ?? '',
+                status.batchDigest,
+              );
+              const updatedBody = session
+                ? `${body.trimEnd()}\n\n${renderPersistedSessionMarker(session)}\n`
+                : body;
               await github.rest.issues.update({
                 owner,
                 repo,
                 issue_number: existing.number,
                 title,
-                body,
+                body: updatedBody,
+                state: 'open',
               });
               core.setOutput('issue-url', existing.html_url);
+              core.setOutput('issue-number', String(existing.number));
+              core.setOutput('existing-session-id', session?.sessionId ?? '');
               core.setOutput('operation', 'updated');
             } else {
               const created = await github.rest.issues.create({
@@ -163,6 +180,8 @@ jobs:
                 labels: [labelName],
               });
               core.setOutput('issue-url', created.data.html_url);
+              core.setOutput('issue-number', String(created.data.number));
+              core.setOutput('existing-session-id', '');
               core.setOutput('operation', 'created');
             }
 
@@ -190,11 +209,17 @@ jobs:
     name: Revalidate approved maintenance batch
     needs: prepare
     if: needs.prepare.outputs.state == 'awaiting-approval'
+    outputs:
+      approval-validated: ${{ steps.approval-validation.outputs.validated }}
+      finalized: ${{ steps.final-status.outputs.finalized }}
     runs-on: ubuntu-26.04
     environment: maintenance-approval
+    timeout-minutes: 75
     permissions:
       actions: read
       contents: read
+      issues: write
+      pull-requests: read
     steps:
       - name: Revalidate repository, commit, and run
         shell: bash
@@ -206,6 +231,12 @@ jobs:
           test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
           test "$GITHUB_SHA" = "$EXPECTED_COMMIT_SHA"
           test "$GITHUB_RUN_ID" = "$EXPECTED_RUN_ID"
+
+      - name: Checkout approved source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit-sha }}
+          persist-credentials: false
 
       - name: Download approved reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -246,6 +277,22 @@ jobs:
           }
           NODE
 
+      - name: Mark approval as validated
+        id: approval-validation
+        shell: bash
+        run: echo "validated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: maintenance-automation/package-lock.json
+
+      - name: Install and build maintenance automation
+        working-directory: maintenance-automation
+        run: npm ci && npm run build
+
       - name: Record validated approval
         shell: bash
         env:
@@ -263,6 +310,281 @@ jobs:
             echo "- Workflow run: \`$APPROVED_RUN_ID\`"
             echo "- Batch digest: \`$APPROVED_BATCH_DIGEST\`"
             echo "- Selected evidence: $APPROVED_BATCH_SIZE"
-            echo
-            echo "No external remediation API is called in this checkpoint."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start or reuse Devin session
+        id: devin-start
+        working-directory: maintenance-automation
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_MAX_ACU_LIMIT: ${{ vars.DEVIN_MAX_ACU_LIMIT || '5' }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          EXISTING_DEVIN_SESSION_ID: ${{ needs.prepare.outputs.existing-devin-session-id }}
+          MAINTENANCE_ISSUE_URL: ${{ needs.prepare.outputs.issue-url }}
+          MAINTENANCE_REPORTS_DIRECTORY: ../approved-reports
+        run: npm run devin:start
+
+      - name: Publish session status
+        if: always() && hashFiles('approved-reports/remediation-update.md') != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ISSUE_NUMBER: ${{ needs.prepare.outputs.issue-number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(
+              'approved-reports/remediation-update.md',
+              'utf8',
+            );
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body,
+            });
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `\n${fs.readFileSync('approved-reports/devin-summary.md', 'utf8')}`,
+            );
+
+      - name: Poll bounded Devin session
+        id: devin-poll
+        if: steps.devin-start.outputs.state == 'devin-running'
+        working-directory: maintenance-automation
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          DEVIN_POLL_INTERVAL_MS: ${{ vars.DEVIN_POLL_INTERVAL_MS || '10000' }}
+          DEVIN_TIMEOUT_MS: ${{ vars.DEVIN_TIMEOUT_MS || '3600000' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTENANCE_ISSUE_URL: ${{ needs.prepare.outputs.issue-url }}
+          MAINTENANCE_REPORTS_DIRECTORY: ../approved-reports
+        run: npm run devin:poll
+
+      - name: Verify draft PR and publish final status
+        id: final-status
+        if: always() && hashFiles('approved-reports/run-status.json') != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          APPROVAL_VALIDATED: ${{ steps.approval-validation.outputs.validated }}
+          DEVIN_POLL_OUTCOME: ${{ steps.devin-poll.outcome }}
+          DEVIN_START_OUTCOME: ${{ steps.devin-start.outcome }}
+          ISSUE_NUMBER: ${{ needs.prepare.outputs.issue-number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const {
+              createFailedStatus,
+              writeDevinArtifacts,
+            } = require('./maintenance-automation/dist/devinApi.js');
+            const reportsDirectory = path.resolve('approved-reports');
+            let status = JSON.parse(
+              fs.readFileSync(path.join(reportsDirectory, 'run-status.json'), 'utf8'),
+            );
+
+            if (process.env.APPROVAL_VALIDATED === 'true') {
+              if (status.state === 'awaiting-approval') {
+                status = createFailedStatus(
+                  status,
+                  `Devin start step failed after approval validation (${process.env.DEVIN_START_OUTCOME})`,
+                  new Date().toISOString(),
+                );
+              } else if (
+                status.state === 'devin-running' &&
+                process.env.DEVIN_POLL_OUTCOME !== 'success'
+              ) {
+                status = createFailedStatus(
+                  status,
+                  `Devin polling step failed after approval validation (${process.env.DEVIN_POLL_OUTCOME})`,
+                  new Date().toISOString(),
+                );
+              }
+            }
+
+            if (status.state === 'draft-pr-ready') {
+              try {
+                const pullUrl = new URL(status.devin.draftPullRequestUrl);
+                const match = pullUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)$/);
+                if (pullUrl.hostname !== 'github.com' || !match) {
+                  throw new Error('Devin returned an invalid GitHub pull request URL');
+                }
+                const [, owner, repo, pullNumber] = match;
+                if (owner !== context.repo.owner || repo !== context.repo.repo) {
+                  throw new Error('Devin returned a pull request for another repository');
+                }
+                const pull = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(pullNumber),
+                });
+                const issueUrl = `https://github.com/${owner}/${repo}/issues/${process.env.ISSUE_NUMBER}`;
+                const body = pull.data.body ?? '';
+                if (pull.data.base.repo.full_name !== status.repository) {
+                  throw new Error('Devin pull request targets another repository');
+                }
+                if (pull.data.state !== 'open') {
+                  throw new Error('Devin pull request is not open');
+                }
+                if (!pull.data.draft) {
+                  throw new Error('Devin pull request is not a draft');
+                }
+                if (!body.includes(issueUrl)) {
+                  throw new Error('Devin pull request does not link the remediation issue');
+                }
+                if (!body.includes(status.workflowUrl)) {
+                  throw new Error('Devin pull request does not link the source workflow');
+                }
+                const requiredSections = [
+                  ['scan evidence', /scan evidence/i],
+                  ['tests run', /tests run/i],
+                  ['unresolved findings', /unresolved findings/i],
+                ];
+                for (const [name, pattern] of requiredSections) {
+                  if (!pattern.test(body)) {
+                    throw new Error(`Devin pull request is missing ${name}`);
+                  }
+                }
+                const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                  owner,
+                  repo,
+                  basehead: `${status.commitSha}...${pull.data.head.sha}`,
+                });
+                if (!['ahead', 'identical'].includes(comparison.data.status)) {
+                  throw new Error('Approved commit is not an ancestor of the pull request head');
+                }
+              } catch (error) {
+                status = createFailedStatus(
+                  status,
+                  error instanceof Error ? error.message : 'Draft pull request verification failed',
+                  new Date().toISOString(),
+                );
+              }
+            }
+
+            if (!['draft-pr-ready', 'devin-failed'].includes(status.state)) {
+              status = createFailedStatus(
+                status,
+                `Remediation ended in unexpected state ${status.state}`,
+                new Date().toISOString(),
+              );
+            }
+
+            writeDevinArtifacts(reportsDirectory, status);
+            const issueBody = fs.readFileSync(
+              path.join(reportsDirectory, 'remediation-update.md'),
+              'utf8',
+            );
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: issueBody,
+            });
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `\n${fs.readFileSync(path.join(reportsDirectory, 'devin-summary.md'), 'utf8')}`,
+            );
+            core.setOutput('state', status.state);
+            core.setOutput('finalized', 'true');
+            if (status.state === 'devin-failed') {
+              core.setFailed(status.failure ?? 'Devin remediation failed');
+            }
+
+      - name: Upload final maintenance status
+        if: always() && hashFiles('approved-reports/run-status.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: maintenance-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            approved-reports/actionable-batch.json
+            approved-reports/run-status.json
+            approved-reports/devin-summary.md
+          if-no-files-found: error
+          retention-days: 30
+
+  finalize-interrupted-run:
+    name: Finalize rejected or interrupted remediation
+    needs: [prepare, approval-boundary]
+    if: >-
+      always() &&
+      needs.prepare.outputs.state == 'awaiting-approval' &&
+      needs.approval-boundary.result != 'success' &&
+      needs.approval-boundary.outputs.finalized != 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Download prepared reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.prepare.outputs.artifact-name }}
+          path: final-reports
+
+      - name: Record terminal status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          APPROVAL_VALIDATED: ${{ needs.approval-boundary.outputs.approval-validated }}
+          ISSUE_NUMBER: ${{ needs.prepare.outputs.issue-number }}
+          ISSUE_URL: ${{ needs.prepare.outputs.issue-url }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const reportsDirectory = path.resolve('final-reports');
+            const statusPath = path.join(reportsDirectory, 'run-status.json');
+            const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+            const approvalValidated = process.env.APPROVAL_VALIDATED === 'true';
+            const state = approvalValidated ? 'devin-failed' : 'approval-rejected';
+            const failure = approvalValidated
+              ? 'Remediation job failed after approval validation'
+              : 'Protected environment approval was rejected or expired before validation';
+            const completed = approvalValidated ? status.batchSize : 0;
+            const finalStatus = {
+              ...status,
+              state,
+              failure,
+              progress: {
+                selected: status.batchSize,
+                active: 0,
+                completed,
+                succeeded: 0,
+                failed: completed,
+                ...(completed === 0 ? {} : { successRate: 0 }),
+              },
+            };
+            const summary = [
+              '# Maintenance remediation',
+              '',
+              `- State: \`${state}\``,
+              `- Failure: ${failure}`,
+              `- Issue: ${status.issueUrl ?? process.env.ISSUE_URL}`,
+              `- Selected: ${status.batchSize}`,
+              `- Completed: ${completed}`,
+              `- Failed: ${completed}`,
+              '',
+            ].join('\n');
+            fs.writeFileSync(statusPath, `${JSON.stringify(finalStatus, null, 2)}\n`);
+            fs.writeFileSync(path.join(reportsDirectory, 'devin-summary.md'), summary);
+            const issueBase = fs.readFileSync(
+              path.join(reportsDirectory, 'remediation-issue.md'),
+              'utf8',
+            ).trimEnd();
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: `${issueBase}\n\n${summary}`,
+            });
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+
+      - name: Upload fallback final status
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: maintenance-final-fallback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            final-reports/actionable-batch.json
+            final-reports/run-status.json
+            final-reports/devin-summary.md
+          if-no-files-found: error
+          retention-days: 30
