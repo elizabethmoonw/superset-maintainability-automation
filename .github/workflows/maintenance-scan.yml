@@ -1,0 +1,268 @@
+name: Maintenance scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: maintenance-scan-${{ github.repository }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Scan and prepare remediation evidence
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    outputs:
+      artifact-name: ${{ steps.metadata.outputs.artifact_name }}
+      batch-digest: ${{ steps.metadata.outputs.batch_digest }}
+      batch-size: ${{ steps.metadata.outputs.batch_size }}
+      commit-sha: ${{ steps.metadata.outputs.commit_sha }}
+      repository: ${{ steps.metadata.outputs.repository }}
+      run-id: ${{ steps.metadata.outputs.run_id }}
+      state: ${{ steps.metadata.outputs.state }}
+    steps:
+      - name: Record scan start
+        shell: bash
+        run: echo "MAINTENANCE_STARTED_AT=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')" >> "$GITHUB_ENV"
+
+      - name: Checkout source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: maintenance-automation/package-lock.json
+
+      - name: Install maintenance dependencies
+        working-directory: maintenance-automation
+        run: npm ci
+
+      - name: Run both scans and prepare batch
+        working-directory: maintenance-automation
+        env:
+          MAINTENANCE_ARTIFACT_NAME: maintenance-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          MAINTENANCE_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: npm run workflow:prepare
+
+      - name: Read run metadata
+        id: metadata
+        working-directory: maintenance-automation
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const status = JSON.parse(fs.readFileSync('reports/run-status.json', 'utf8'));
+          const outputs = {
+            artifact_name: status.artifactName,
+            batch_digest: status.batchDigest,
+            batch_size: String(status.batchSize),
+            commit_sha: status.commitSha,
+            repository: status.repository,
+            run_id: status.runId,
+            state: status.state,
+          };
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(''),
+          );
+          NODE
+
+      - name: Upload complete reports and status
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: maintenance-automation/reports/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update remediation issue
+        id: issue
+        if: steps.metadata.outputs.batch_size != '0'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BATCH_DIGEST: ${{ steps.metadata.outputs.batch_digest }}
+          COMMIT_SHA: ${{ steps.metadata.outputs.commit_sha }}
+          MAINTENANCE_LABEL: maintenance-automation
+        with:
+          script: |
+            const fs = require('fs');
+            const status = JSON.parse(
+              fs.readFileSync('maintenance-automation/reports/run-status.json', 'utf8'),
+            );
+            const body = fs.readFileSync(
+              'maintenance-automation/reports/remediation-issue.md',
+              'utf8',
+            );
+            const marker = `<!-- maintenance-scan:${status.issueDedupeKey} -->`;
+            const shortSha = process.env.COMMIT_SHA.slice(0, 12);
+            const shortDigest = process.env.BATCH_DIGEST.slice(0, 12);
+            const title = `Maintenance evidence ${shortSha} (${shortDigest})`;
+            const labelName = process.env.MAINTENANCE_LABEL;
+            const { owner, repo } = context.repo;
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: labelName });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: labelName,
+                color: '0969da',
+                description: 'Evidence prepared by the maintenance automation',
+              });
+            }
+
+            const pages = github.paginate.iterator(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              labels: labelName,
+              sort: 'created',
+              direction: 'desc',
+              per_page: 100,
+            });
+            let existing;
+            let pagesRead = 0;
+            for await (const page of pages) {
+              existing = page.data.find(
+                issue =>
+                  !issue.pull_request && issue.body?.split(/\r?\n/).includes(marker),
+              );
+              pagesRead += 1;
+              if (existing || pagesRead >= 5) break;
+            }
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existing.number,
+                title,
+                body,
+              });
+              core.setOutput('issue-url', existing.html_url);
+              core.setOutput('operation', 'updated');
+            } else {
+              const created = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: [labelName],
+              });
+              core.setOutput('issue-url', created.data.html_url);
+              core.setOutput('operation', 'created');
+            }
+
+      - name: Write workflow summary
+        working-directory: maintenance-automation
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
+          ISSUE_OPERATION: ${{ steps.issue.outputs.operation }}
+          ISSUE_URL: ${{ steps.issue.outputs.issue-url }}
+        run: |
+          cat reports/maintenance-summary.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "## Automation boundary"
+            echo
+            echo "- Reports artifact: \`$ARTIFACT_NAME\`"
+            echo "- Repository prerequisite: configure required reviewers on the protected \`maintenance-approval\` environment."
+            if [ -n "$ISSUE_URL" ]; then
+              echo "- Remediation issue: [$ISSUE_OPERATION]($ISSUE_URL)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  approval-boundary:
+    name: Revalidate approved maintenance batch
+    needs: prepare
+    if: needs.prepare.outputs.state == 'awaiting-approval'
+    runs-on: ubuntu-26.04
+    environment: maintenance-approval
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Revalidate repository, commit, and run
+        shell: bash
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.prepare.outputs.commit-sha }}
+          EXPECTED_REPOSITORY: ${{ needs.prepare.outputs.repository }}
+          EXPECTED_RUN_ID: ${{ needs.prepare.outputs.run-id }}
+        run: |
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT_SHA"
+          test "$GITHUB_RUN_ID" = "$EXPECTED_RUN_ID"
+
+      - name: Download approved reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.prepare.outputs.artifact-name }}
+          path: approved-reports
+
+      - name: Revalidate batch digest and status
+        shell: bash
+        env:
+          EXPECTED_BATCH_DIGEST: ${{ needs.prepare.outputs.batch-digest }}
+          EXPECTED_COMMIT_SHA: ${{ needs.prepare.outputs.commit-sha }}
+          EXPECTED_REPOSITORY: ${{ needs.prepare.outputs.repository }}
+          EXPECTED_RUN_ID: ${{ needs.prepare.outputs.run-id }}
+        run: |
+          node <<'NODE'
+          const crypto = require('crypto');
+          const fs = require('fs');
+          const batch = fs.readFileSync('approved-reports/actionable-batch.json');
+          const status = JSON.parse(fs.readFileSync('approved-reports/run-status.json', 'utf8'));
+          const digest = crypto.createHash('sha256').update(batch).digest('hex');
+          const expected = {
+            batchDigest: process.env.EXPECTED_BATCH_DIGEST,
+            commitSha: process.env.EXPECTED_COMMIT_SHA,
+            repository: process.env.EXPECTED_REPOSITORY,
+            runId: process.env.EXPECTED_RUN_ID,
+          };
+          for (const [field, value] of Object.entries(expected)) {
+            if (status[field] !== value) {
+              throw new Error(`Approval scope changed for ${field}`);
+            }
+          }
+          if (digest !== expected.batchDigest) {
+            throw new Error('Approved batch content does not match its digest');
+          }
+          if (status.state !== 'awaiting-approval' || status.batchSize < 1) {
+            throw new Error('Approved run is not an actionable batch');
+          }
+          NODE
+
+      - name: Record validated approval
+        shell: bash
+        env:
+          APPROVED_BATCH_DIGEST: ${{ needs.prepare.outputs.batch-digest }}
+          APPROVED_BATCH_SIZE: ${{ needs.prepare.outputs.batch-size }}
+          APPROVED_COMMIT_SHA: ${{ needs.prepare.outputs.commit-sha }}
+          APPROVED_REPOSITORY: ${{ needs.prepare.outputs.repository }}
+          APPROVED_RUN_ID: ${{ needs.prepare.outputs.run-id }}
+        run: |
+          {
+            echo "# Maintenance approval validated"
+            echo
+            echo "- Repository: \`$APPROVED_REPOSITORY\`"
+            echo "- Commit: \`$APPROVED_COMMIT_SHA\`"
+            echo "- Workflow run: \`$APPROVED_RUN_ID\`"
+            echo "- Batch digest: \`$APPROVED_BATCH_DIGEST\`"
+            echo "- Selected evidence: $APPROVED_BATCH_SIZE"
+            echo
+            echo "No external remediation API is called in this checkpoint."
+          } >> "$GITHUB_STEP_SUMMARY"

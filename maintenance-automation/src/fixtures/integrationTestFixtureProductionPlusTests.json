@@ -1,0 +1,37 @@
+{
+  "issues": [
+    {
+      "file": "src/production/ProductionOnlyComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/ProductionOnlyComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/UnreferencedComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/UnreferencedComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/config/unusedConfig.ts",
+      "files": [
+        {
+          "name": "src/production/config/unusedConfig.ts"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    }
+  ]
+}

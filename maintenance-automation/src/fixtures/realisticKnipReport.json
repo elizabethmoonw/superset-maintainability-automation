@@ -1,0 +1,302 @@
+{
+  "issues": [
+    {
+      "file": ".storybook/shared/createQueryStory.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": ".storybook/shared/createQueryStory.tsx"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": ".storybook/shared/dummyDatasource.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": ".storybook/shared/dummyDatasource.ts"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/components/Datasource/components/DatasourceEditor/components/index.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/components/Datasource/components/DatasourceEditor/components/index.ts"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/dashboard/components/ColorSchemeControlWrapper.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/dashboard/components/ColorSchemeControlWrapper.tsx"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/explore/components/controls/MetricControl/columnType.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/explore/components/controls/MetricControl/columnType.ts"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/features/datasets/metadataBar/DatasetMetadataBar.skipped-stories.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/features/datasets/metadataBar/DatasetMetadataBar.skipped-stories.tsx"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/types/Action.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/types/Action.ts"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/visualizations/dashboardComponents/ExampleComponent/ExampleComponent.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "src/visualizations/dashboardComponents/ExampleComponent/ExampleComponent.tsx"
+        }
+      ],
+      "types": []
+    },
+    {
+      "file": "src/chartCustomizations/components/common.ts",
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "RESPONSIVE_WIDTH",
+          "line": 23,
+          "col": 14,
+          "pos": 722
+        },
+        {
+          "name": "StyledFormItem",
+          "line": 37,
+          "col": 14,
+          "pos": 1265
+        }
+      ],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/components/Chart/MenuItemWithTruncation.tsx",
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "useMenuItemWithTruncation",
+          "line": 59,
+          "col": 14,
+          "pos": 1897
+        },
+        {
+          "name": "MenuItemWithTruncation",
+          "line": 98,
+          "col": 14,
+          "pos": 3214
+        }
+      ],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/components/DatabaseSelector/index.tsx",
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "SelectLabel",
+          "line": 153,
+          "col": 14,
+          "pos": 4849
+        }
+      ],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/components/ErrorMessage/index.tsx",
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "IssueCode",
+          "line": 27,
+          "col": 10,
+          "pos": 787
+        }
+      ],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/explore/components/controls/MetricControl/columnType.ts",
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "MetricColumnType",
+          "line": 10,
+          "col": 14,
+          "pos": 320
+        }
+      ],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/components/controls/AdhocFilterControl/index.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "types": [
+        {
+          "name": "AdhocFilterControlProps",
+          "line": 77,
+          "col": 18,
+          "pos": 2548
+        }
+      ]
+    },
+    {
+      "file": "src/components/controls/MetricControl/MetricsControl.tsx",
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "types": [
+        {
+          "name": "MetricsControlProps",
+          "line": 107,
+          "col": 18,
+          "pos": 4023
+        }
+      ]
+    },
+    {
+      "file": "src/features/alerts/types.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "types": [
+        {
+          "name": "DashboardState",
+          "line": 94,
+          "col": 13,
+          "pos": 3060
+        },
+        {
+          "name": "RecipientIconName",
+          "line": 175,
+          "col": 13,
+          "pos": 5600
+        }
+      ]
+    },
+    {
+      "file": "src/features/dashboards/types.ts",
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "types": [
+        {
+          "name": "DashboardObject",
+          "line": 19,
+          "col": 13,
+          "pos": 620
+        }
+      ]
+    },
+    {
+      "file": "src/components/ListView/types.ts",
+      "enumMembers": [
+        {
+          "namespace": "ListViewFilterOperator",
+          "name": "EndsWith",
+          "line": 113,
+          "col": 3,
+          "pos": 2871
+        },
+        {
+          "namespace": "ListViewFilterOperator",
+          "name": "NotStartsWith",
+          "line": 116,
+          "col": 3,
+          "pos": 2926
+        },
+        {
+          "namespace": "ListViewFilterOperator",
+          "name": "NotEndsWith",
+          "line": 117,
+          "col": 3,
+          "pos": 2951
+        }
+      ],
+      "exports": [],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/components/Tag/TagType.ts",
+      "enumMembers": [
+        {
+          "namespace": "TagTypeEnum",
+          "name": "Type",
+          "line": 45,
+          "col": 3,
+          "pos": 1461
+        },
+        {
+          "namespace": "TagTypeEnum",
+          "name": "Owner",
+          "line": 46,
+          "col": 3,
+          "pos": 1473
+        }
+      ],
+      "exports": [],
+      "files": [],
+      "types": []
+    },
+    {
+      "file": "src/dashboard/types.ts",
+      "enumMembers": [
+        {
+          "namespace": "MenuKeys",
+          "name": "EditCss",
+          "line": 399,
+          "col": 3,
+          "pos": 11976
+        }
+      ],
+      "exports": [],
+      "files": [],
+      "types": []
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "issues": [
+    {
+      "file": "src/production/ProductionOnlyComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/ProductionOnlyComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/TestReferencedComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/TestReferencedComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/StoryReferencedComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/StoryReferencedComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/UnreferencedComponent.tsx",
+      "files": [
+        {
+          "name": "src/production/UnreferencedComponent.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/TestReferencedComponent.test.tsx",
+      "files": [
+        {
+          "name": "src/production/TestReferencedComponent.test.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/StoryReferencedComponent.stories.tsx",
+      "files": [
+        {
+          "name": "src/production/StoryReferencedComponent.stories.tsx"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": ".storybook/config/setup.ts",
+      "files": [
+        {
+          "name": ".storybook/config/setup.ts"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "jest.config.js",
+      "files": [
+        {
+          "name": "jest.config.js"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    },
+    {
+      "file": "src/production/config/unusedConfig.ts",
+      "files": [
+        {
+          "name": "src/production/config/unusedConfig.ts"
+        }
+      ],
+      "exports": [],
+      "types": [],
+      "enumMembers": []
+    }
+  ]
+}
