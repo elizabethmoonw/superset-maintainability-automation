@@ -124,17 +124,25 @@ jobs:
               });
             }
 
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
+            const pages = github.paginate.iterator(github.rest.issues.listForRepo, {
               owner,
               repo,
               state: 'all',
               labels: labelName,
+              sort: 'created',
+              direction: 'desc',
               per_page: 100,
             });
-            const existing = issues.find(
-              issue =>
-                !issue.pull_request && issue.body?.split(/\r?\n/).includes(marker),
-            );
+            let existing;
+            let pagesRead = 0;
+            for await (const page of pages) {
+              existing = page.data.find(
+                issue =>
+                  !issue.pull_request && issue.body?.split(/\r?\n/).includes(marker),
+              );
+              pagesRead += 1;
+              if (existing || pagesRead >= 5) break;
+            }
 
             if (existing) {
               await github.rest.issues.update({
