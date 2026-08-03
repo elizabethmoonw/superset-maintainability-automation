@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/webpro/knip/v6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/preamble.ts!",
+        "src/theme.ts!",
+        "src/views/menu.tsx!",
+        "src/views/index.tsx!",
+        "src/embedded/index.tsx!",
+        "src/service-worker.ts!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,js,jsx,mdx}!"
+      ],
+      "webpack": false
+    }
+  },
+  "ignoreWorkspaces": [
+    "packages/*",
+    "plugins/*"
+  ]
+}

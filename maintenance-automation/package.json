@@ -1,0 +1,21 @@
+{
+  "name": "maintenance-automation",
+  "version": "1.0.0",
+  "description": "Maintenance automation package",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "scan": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers",
+    "scan:all": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --include files,exports,types,enumMembers",
+    "scan:prod": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "knip": "6.31.0",
+    "typescript": "^5.0.0"
+  }
+}
