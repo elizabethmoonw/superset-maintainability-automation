@@ -33,6 +33,12 @@ import { NormalizedFinding } from "./parseKnipReport";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+interface KnipTestConfig {
+  $schema: string;
+  ignoreWorkspaces: string[];
+  workspaces: Record<string, { entry: string[] }>;
+}
+
 describe("CLI Knip validation", () => {
   describe("validateKnipExitCode", () => {
     test("accepts Knip success and findings exit codes", () => {
@@ -59,12 +65,18 @@ describe("CLI Knip validation", () => {
     });
 
     test("throws error for missing mode argument", () => {
-      expect(() => validateMode(undefined)).toThrow("Missing required mode argument");
+      expect(() => validateMode(undefined)).toThrow(
+        "Missing required mode argument",
+      );
     });
 
     test("throws error for invalid mode argument", () => {
-      expect(() => validateMode("invalidMode")).toThrow("Invalid mode 'invalidMode'");
-      expect(() => validateMode("Production")).toThrow("Invalid mode 'Production'");
+      expect(() => validateMode("invalidMode")).toThrow(
+        "Invalid mode 'invalidMode'",
+      );
+      expect(() => validateMode("Production")).toThrow(
+        "Invalid mode 'Production'",
+      );
       expect(() => validateMode("test")).toThrow("Invalid mode 'test'");
     });
   });
@@ -76,7 +88,9 @@ describe("CLI Knip validation", () => {
       expect(scanDef.modeName).toBe("production");
       expect(scanDef.configFile).toBe("knip.json");
       expect(scanDef.rawOutputFile).toContain("raw-production.json");
-      expect(scanDef.processedOutputFile).toContain("processed-production.json");
+      expect(scanDef.processedOutputFile).toContain(
+        "processed-production.json",
+      );
       expect(scanDef.reportFile).toContain("production-report.md");
       expect(scanDef.metadataFile).toContain("production-metadata.json");
     });
@@ -87,28 +101,44 @@ describe("CLI Knip validation", () => {
       expect(scanDef.modeName).toBe("productionPlusTests");
       expect(scanDef.configFile).toBe("knip-production-plus-tests.json");
       expect(scanDef.rawOutputFile).toContain("raw-productionPlusTests.json");
-      expect(scanDef.processedOutputFile).toContain("processed-productionPlusTests.json");
+      expect(scanDef.processedOutputFile).toContain(
+        "processed-productionPlusTests.json",
+      );
       expect(scanDef.reportFile).toContain("productionPlusTests-report.md");
-      expect(scanDef.metadataFile).toContain("productionPlusTests-metadata.json");
+      expect(scanDef.metadataFile).toContain(
+        "productionPlusTests-metadata.json",
+      );
     });
 
     test("returns different config files for each mode", () => {
       const productionDef = getScanDefinition("production");
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
-      expect(productionDef.configFile).not.toBe(productionPlusTestsDef.configFile);
+      expect(productionDef.configFile).not.toBe(
+        productionPlusTestsDef.configFile,
+      );
       expect(productionDef.configFile).toBe("knip.json");
-      expect(productionPlusTestsDef.configFile).toBe("knip-production-plus-tests.json");
+      expect(productionPlusTestsDef.configFile).toBe(
+        "knip-production-plus-tests.json",
+      );
     });
 
     test("returns different output paths for each mode", () => {
       const productionDef = getScanDefinition("production");
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
-      expect(productionDef.rawOutputFile).not.toBe(productionPlusTestsDef.rawOutputFile);
-      expect(productionDef.processedOutputFile).not.toBe(productionPlusTestsDef.processedOutputFile);
-      expect(productionDef.reportFile).not.toBe(productionPlusTestsDef.reportFile);
-      expect(productionDef.metadataFile).not.toBe(productionPlusTestsDef.metadataFile);
+      expect(productionDef.rawOutputFile).not.toBe(
+        productionPlusTestsDef.rawOutputFile,
+      );
+      expect(productionDef.processedOutputFile).not.toBe(
+        productionPlusTestsDef.processedOutputFile,
+      );
+      expect(productionDef.reportFile).not.toBe(
+        productionPlusTestsDef.reportFile,
+      );
+      expect(productionDef.metadataFile).not.toBe(
+        productionPlusTestsDef.metadataFile,
+      );
     });
   });
 
@@ -138,7 +168,9 @@ describe("CLI Knip validation", () => {
       const scanDef = getScanDefinition("productionPlusTests");
       const command = buildKnipCommand(scanDef);
 
-      expect(command).toContain("--config ../maintenance-automation/knip-production-plus-tests.json");
+      expect(command).toContain(
+        "--config ../maintenance-automation/knip-production-plus-tests.json",
+      );
     });
 
     test("includes required flags for both modes", () => {
@@ -146,15 +178,23 @@ describe("CLI Knip validation", () => {
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
       const productionCommand = buildKnipCommand(productionDef);
-      const productionPlusTestsCommand = buildKnipCommand(productionPlusTestsDef);
+      const productionPlusTestsCommand = buildKnipCommand(
+        productionPlusTestsDef,
+      );
 
       // Both should have these flags
       expect(productionCommand).toContain("--directory ../superset-frontend");
-      expect(productionCommand).toContain("--include files,exports,types,enumMembers");
+      expect(productionCommand).toContain(
+        "--include files,exports,types,enumMembers",
+      );
       expect(productionCommand).toContain("--reporter json");
 
-      expect(productionPlusTestsCommand).toContain("--directory ../superset-frontend");
-      expect(productionPlusTestsCommand).toContain("--include files,exports,types,enumMembers");
+      expect(productionPlusTestsCommand).toContain(
+        "--directory ../superset-frontend",
+      );
+      expect(productionPlusTestsCommand).toContain(
+        "--include files,exports,types,enumMembers",
+      );
       expect(productionPlusTestsCommand).toContain("--reporter json");
     });
   });
@@ -197,10 +237,18 @@ describe("CLI Knip validation", () => {
     });
 
     test("rejects non-object input", () => {
-      expect(() => validateKnipReportStructure(null)).toThrow(KnipValidationError);
-      expect(() => validateKnipReportStructure(undefined)).toThrow(KnipValidationError);
-      expect(() => validateKnipReportStructure("string")).toThrow(KnipValidationError);
-      expect(() => validateKnipReportStructure(123)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(null)).toThrow(
+        KnipValidationError,
+      );
+      expect(() => validateKnipReportStructure(undefined)).toThrow(
+        KnipValidationError,
+      );
+      expect(() => validateKnipReportStructure("string")).toThrow(
+        KnipValidationError,
+      );
+      expect(() => validateKnipReportStructure(123)).toThrow(
+        KnipValidationError,
+      );
     });
 
     test("rejects object without issues property", () => {
@@ -208,7 +256,9 @@ describe("CLI Knip validation", () => {
         notIssues: [],
       };
 
-      expect(() => validateKnipReportStructure(invalidReport)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(invalidReport)).toThrow(
+        KnipValidationError,
+      );
     });
 
     test("rejects non-array issues property", () => {
@@ -216,7 +266,9 @@ describe("CLI Knip validation", () => {
         issues: "not an array",
       };
 
-      expect(() => validateKnipReportStructure(invalidReport)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(invalidReport)).toThrow(
+        KnipValidationError,
+      );
     });
 
     test("rejects issue without file property", () => {
@@ -228,7 +280,9 @@ describe("CLI Knip validation", () => {
         ],
       };
 
-      expect(() => validateKnipReportStructure(invalidReport)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(invalidReport)).toThrow(
+        KnipValidationError,
+      );
     });
 
     test("rejects issue with null file property", () => {
@@ -240,7 +294,9 @@ describe("CLI Knip validation", () => {
         ],
       };
 
-      expect(() => validateKnipReportStructure(invalidReport)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(invalidReport)).toThrow(
+        KnipValidationError,
+      );
     });
 
     test("rejects non-object issue", () => {
@@ -248,7 +304,9 @@ describe("CLI Knip validation", () => {
         issues: ["not an object"],
       };
 
-      expect(() => validateKnipReportStructure(invalidReport)).toThrow(KnipValidationError);
+      expect(() => validateKnipReportStructure(invalidReport)).toThrow(
+        KnipValidationError,
+      );
     });
   });
 
@@ -319,7 +377,10 @@ describe("CLI Knip validation", () => {
         },
       ];
 
-      const result = compareFindings(productionFindings, productionPlusTestsFindings);
+      const result = compareFindings(
+        productionFindings,
+        productionPlusTestsFindings,
+      );
 
       expect(result.sharedCount).toBe(2);
       expect(result.productionOnlyCount).toBe(2);
@@ -381,7 +442,10 @@ describe("CLI Knip validation", () => {
         },
       ];
 
-      const result = compareFindings(productionFindings, productionPlusTestsFindings);
+      const result = compareFindings(
+        productionFindings,
+        productionPlusTestsFindings,
+      );
 
       expect(result.sharedCount).toBe(0);
       expect(result.productionOnlyCount).toBe(1);
@@ -394,7 +458,9 @@ describe("CLI Knip validation", () => {
       const scanDef = getScanDefinition("production");
 
       expect(scanDef.rawOutputFile).toContain("raw-production.json");
-      expect(scanDef.processedOutputFile).toContain("processed-production.json");
+      expect(scanDef.processedOutputFile).toContain(
+        "processed-production.json",
+      );
       expect(scanDef.reportFile).toContain("production-report.md");
       expect(scanDef.metadataFile).toContain("production-metadata.json");
     });
@@ -403,9 +469,13 @@ describe("CLI Knip validation", () => {
       const scanDef = getScanDefinition("productionPlusTests");
 
       expect(scanDef.rawOutputFile).toContain("raw-productionPlusTests.json");
-      expect(scanDef.processedOutputFile).toContain("processed-productionPlusTests.json");
+      expect(scanDef.processedOutputFile).toContain(
+        "processed-productionPlusTests.json",
+      );
       expect(scanDef.reportFile).toContain("productionPlusTests-report.md");
-      expect(scanDef.metadataFile).toContain("productionPlusTests-metadata.json");
+      expect(scanDef.metadataFile).toContain(
+        "productionPlusTests-metadata.json",
+      );
     });
 
     test("both modes use different output paths to avoid conflicts", () => {
@@ -413,10 +483,18 @@ describe("CLI Knip validation", () => {
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
       // All output paths should be different
-      expect(productionDef.rawOutputFile).not.toBe(productionPlusTestsDef.rawOutputFile);
-      expect(productionDef.processedOutputFile).not.toBe(productionPlusTestsDef.processedOutputFile);
-      expect(productionDef.reportFile).not.toBe(productionPlusTestsDef.reportFile);
-      expect(productionDef.metadataFile).not.toBe(productionPlusTestsDef.metadataFile);
+      expect(productionDef.rawOutputFile).not.toBe(
+        productionPlusTestsDef.rawOutputFile,
+      );
+      expect(productionDef.processedOutputFile).not.toBe(
+        productionPlusTestsDef.processedOutputFile,
+      );
+      expect(productionDef.reportFile).not.toBe(
+        productionPlusTestsDef.reportFile,
+      );
+      expect(productionDef.metadataFile).not.toBe(
+        productionPlusTestsDef.metadataFile,
+      );
     });
   });
 
@@ -436,7 +514,9 @@ describe("CLI Knip validation", () => {
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
       const productionCommand = buildKnipCommand(productionDef);
-      const productionPlusTestsCommand = buildKnipCommand(productionPlusTestsDef);
+      const productionPlusTestsCommand = buildKnipCommand(
+        productionPlusTestsDef,
+      );
 
       // Both should use --production flag
       expect(productionCommand).toContain("--production");
@@ -448,21 +528,27 @@ describe("CLI Knip validation", () => {
       const productionPlusTestsDef = getScanDefinition("productionPlusTests");
 
       const productionCommand = buildKnipCommand(productionDef);
-      const productionPlusTestsCommand = buildKnipCommand(productionPlusTestsDef);
+      const productionPlusTestsCommand = buildKnipCommand(
+        productionPlusTestsDef,
+      );
 
       // Both should include the same issue types
-      expect(productionCommand).toContain("--include files,exports,types,enumMembers");
-      expect(productionPlusTestsCommand).toContain("--include files,exports,types,enumMembers");
+      expect(productionCommand).toContain(
+        "--include files,exports,types,enumMembers",
+      );
+      expect(productionPlusTestsCommand).toContain(
+        "--include files,exports,types,enumMembers",
+      );
     });
   });
 
   describe("knip-production-plus-tests.json configuration validation", () => {
     const configPath = join(__dirname, "..", "knip-production-plus-tests.json");
-    let config: any;
+    let config: KnipTestConfig;
 
     beforeAll(() => {
       const configContent = readFileSync(configPath, "utf-8");
-      config = JSON.parse(configContent);
+      config = JSON.parse(configContent) as KnipTestConfig;
     });
 
     test("config file exists and is valid JSON", () => {
@@ -500,14 +586,19 @@ describe("CLI Knip validation", () => {
     test("directory patterns match representative root and nested paths", () => {
       const picomatch = require("picomatch");
       const entryPatterns = config.workspaces["."].entry.map(
-        (pattern: string) => pattern.endsWith("!") ? pattern.slice(0, -1) : pattern,
+        (pattern: string) =>
+          pattern.endsWith("!") ? pattern.slice(0, -1) : pattern,
       );
       const isReferenceSource = (filePath: string) =>
-        entryPatterns.some((pattern: string) => picomatch.isMatch(filePath, pattern));
+        entryPatterns.some((pattern: string) =>
+          picomatch.isMatch(filePath, pattern),
+        );
 
       expect(isReferenceSource("tests/helper.ts")).toBe(true);
       expect(isReferenceSource("src/components/tests/helper.ts")).toBe(true);
-      expect(isReferenceSource("src/features/widget/__stories__/helper.tsx")).toBe(true);
+      expect(
+        isReferenceSource("src/features/widget/__stories__/helper.tsx"),
+      ).toBe(true);
     });
 
     test("contains all production entry points", () => {
@@ -527,16 +618,16 @@ describe("CLI Knip validation", () => {
 
       // These should NOT be in entry patterns
       const hasStorybookPatterns = entryPatterns.some((pattern: string) =>
-        pattern.includes(".storybook")
+        pattern.includes(".storybook"),
       );
       const hasWebpackPatterns = entryPatterns.some((pattern: string) =>
-        pattern.includes("webpack")
+        pattern.includes("webpack"),
       );
       const hasPluginsPatterns = entryPatterns.some((pattern: string) =>
-        pattern.startsWith("plugins/")
+        pattern.startsWith("plugins/"),
       );
       const hasPackagesPatterns = entryPatterns.some((pattern: string) =>
-        pattern.startsWith("packages/")
+        pattern.startsWith("packages/"),
       );
 
       expect(hasStorybookPatterns).toBe(false);
@@ -560,7 +651,7 @@ describe("CLI Knip validation", () => {
       // Ensure ignoreWorkspaces patterns are not duplicated in entry
       ignoreWorkspaces.forEach((ignorePattern: string) => {
         const isInEntry = entryPatterns.some((entryPattern: string) =>
-          entryPattern.startsWith(ignorePattern)
+          entryPattern.startsWith(ignorePattern),
         );
         expect(isInEntry).toBe(false);
       });

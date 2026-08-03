@@ -21,7 +21,11 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
-import { parseKnipReport, type NormalizedFinding, type KnipReport } from "./parseKnipReport";
+import {
+  parseKnipReport,
+  type NormalizedFinding,
+  type KnipReport,
+} from "./parseKnipReport";
 
 interface KnipExecutionError extends Error {
   stdout?: string;
@@ -41,7 +45,12 @@ class KnipExecutionError extends Error implements KnipExecutionError {
   stderr?: string;
   exitCode?: number;
 
-  constructor(message: string, stdout?: string, stderr?: string, exitCode?: number) {
+  constructor(
+    message: string,
+    stdout?: string,
+    stderr?: string,
+    exitCode?: number,
+  ) {
     super(message);
     this.name = "KnipExecutionError";
     this.stdout = stdout;
@@ -50,8 +59,22 @@ class KnipExecutionError extends Error implements KnipExecutionError {
   }
 }
 
-export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, validateMode, compareFindings, getScanDefinition, buildKnipCommand };
-export type { ScanMode, ComparisonResult, ScanDefinition, NormalizedFinding, KnipReport };
+export {
+  KnipValidationError,
+  KnipExecutionError,
+  validateKnipReportStructure,
+  validateMode,
+  compareFindings,
+  getScanDefinition,
+  buildKnipCommand,
+};
+export type {
+  ScanMode,
+  ComparisonResult,
+  ScanDefinition,
+  NormalizedFinding,
+  KnipReport,
+};
 
 type ScanMode = "production" | "productionPlusTests";
 
@@ -72,7 +95,18 @@ interface ComparisonResult {
   productionPlusTestsOnly: NormalizedFinding[];
 }
 
+interface ScanMetadata {
+  timestamp: string;
+  scanMode: string;
+  rawHash: string;
+  processedHash: string;
+  rawReportPath: string;
+  processedReportPath: string;
+  reportPath: string;
+}
+
 const VALID_MODES: ScanMode[] = ["production", "productionPlusTests"];
+const KNIP_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 function getScanDefinition(mode: ScanMode): ScanDefinition {
   const scanDefinitions: Record<ScanMode, ScanDefinition> = {
@@ -117,9 +151,14 @@ function createFindingKey(finding: NormalizedFinding): string {
   return `${finding.issueType}|${finding.normalizedPath}|${finding.symbolName || ""}`;
 }
 
-function compareFindings(productionFindings: NormalizedFinding[], productionPlusTestsFindings: NormalizedFinding[]): ComparisonResult {
+function compareFindings(
+  productionFindings: NormalizedFinding[],
+  productionPlusTestsFindings: NormalizedFinding[],
+): ComparisonResult {
   const productionSet = new Set(productionFindings.map(createFindingKey));
-  const productionPlusTestsSet = new Set(productionPlusTestsFindings.map(createFindingKey));
+  const productionPlusTestsSet = new Set(
+    productionPlusTestsFindings.map(createFindingKey),
+  );
 
   const shared: NormalizedFinding[] = [];
   const productionOnly: NormalizedFinding[] = [];
@@ -154,15 +193,33 @@ const REPORTS_DIR = path.join(__dirname, "..", "reports");
 
 // Production scan files
 const RAW_PRODUCTION_FILE = path.join(REPORTS_DIR, "raw-production.json");
-const PROCESSED_PRODUCTION_FILE = path.join(REPORTS_DIR, "processed-production.json");
+const PROCESSED_PRODUCTION_FILE = path.join(
+  REPORTS_DIR,
+  "processed-production.json",
+);
 const PRODUCTION_REPORT_FILE = path.join(REPORTS_DIR, "production-report.md");
-const PRODUCTION_METADATA_FILE = path.join(REPORTS_DIR, "production-metadata.json");
+const PRODUCTION_METADATA_FILE = path.join(
+  REPORTS_DIR,
+  "production-metadata.json",
+);
 
 // Production Plus Tests scan files
-const RAW_PRODUCTION_PLUS_TESTS_FILE = path.join(REPORTS_DIR, "raw-productionPlusTests.json");
-const PROCESSED_PRODUCTION_PLUS_TESTS_FILE = path.join(REPORTS_DIR, "processed-productionPlusTests.json");
-const PRODUCTION_PLUS_TESTS_REPORT_FILE = path.join(REPORTS_DIR, "productionPlusTests-report.md");
-const PRODUCTION_PLUS_TESTS_METADATA_FILE = path.join(REPORTS_DIR, "productionPlusTests-metadata.json");
+const RAW_PRODUCTION_PLUS_TESTS_FILE = path.join(
+  REPORTS_DIR,
+  "raw-productionPlusTests.json",
+);
+const PROCESSED_PRODUCTION_PLUS_TESTS_FILE = path.join(
+  REPORTS_DIR,
+  "processed-productionPlusTests.json",
+);
+const PRODUCTION_PLUS_TESTS_REPORT_FILE = path.join(
+  REPORTS_DIR,
+  "productionPlusTests-report.md",
+);
+const PRODUCTION_PLUS_TESTS_METADATA_FILE = path.join(
+  REPORTS_DIR,
+  "productionPlusTests-metadata.json",
+);
 
 export function ensureReportsDirectory(): void {
   if (!fs.existsSync(REPORTS_DIR)) {
@@ -176,17 +233,24 @@ function validateKnipReportStructure(data: unknown): data is KnipReport {
   }
 
   const report = data as Record<string, unknown>;
-  
+
   if (!("issues" in report) || !Array.isArray(report.issues)) {
-    throw new KnipValidationError("Knip output does not contain valid 'issues' array");
+    throw new KnipValidationError(
+      "Knip output does not contain valid 'issues' array",
+    );
   }
 
-  // Validate that each issue has a file property and optional arrays
   for (const issue of report.issues) {
-    if (typeof issue !== "object" || issue === null || !("file" in issue) || (issue as any).file === null) {
-      throw new KnipValidationError("Each issue must have a non-null 'file' property");
+    if (
+      typeof issue !== "object" ||
+      issue === null ||
+      !("file" in issue) ||
+      typeof issue.file !== "string"
+    ) {
+      throw new KnipValidationError(
+        "Each issue must have a non-null 'file' property",
+      );
     }
-    // The arrays are optional, so we don't need to validate their presence
   }
 
   return true;
@@ -207,7 +271,25 @@ export function validateKnipExitCode(
   }
 }
 
-function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: string): string {
+function readExecutionOutput(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return Buffer.isBuffer(value) ? value.toString("utf8") : "";
+}
+
+function getExecutionExitCode(error: Record<string, unknown>): number {
+  if (typeof error.status === "number") {
+    return error.status;
+  }
+  return typeof error.exitCode === "number" ? error.exitCode : 1;
+}
+
+function captureRawKnipOutput(
+  configFile: string,
+  outputFile: string,
+  scanMode: string,
+): string {
   console.log(`Capturing raw Knip output for ${scanMode} mode...`);
 
   const scanDefinition = getScanDefinition(scanMode as ScanMode);
@@ -218,28 +300,38 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
   let exitCode = 0;
 
   try {
-    stdout = execSync(
-      command,
-      {
-        cwd: path.join(__dirname, ".."),
-        encoding: "utf-8",
-        stdio: "pipe",
-      }
-    );
+    stdout = execSync(command, {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf-8",
+      stdio: "pipe",
+      maxBuffer: KNIP_MAX_BUFFER_BYTES,
+    });
     stderr = "";
     exitCode = 0;
-  } catch (error: any) {
-    // Knip returns exit code 1 when it finds issues, but stdout still contains the JSON
-    stdout = error.stdout || "";
-    stderr = error.stderr || "";
-    exitCode = error.status || error.exitCode || 1;
+  } catch (error: unknown) {
+    const executionFailure =
+      typeof error === "object" && error !== null
+        ? (error as Record<string, unknown>)
+        : {};
+    stdout = readExecutionOutput(executionFailure.stdout);
+    stderr = readExecutionOutput(executionFailure.stderr);
+    exitCode = getExecutionExitCode(executionFailure);
+
+    if (executionFailure.code === "ENOBUFS") {
+      throw new KnipExecutionError(
+        `Knip output exceeded the ${KNIP_MAX_BUFFER_BYTES}-byte capture limit`,
+        stdout,
+        stderr,
+        exitCode,
+      );
+    }
 
     if (!stdout) {
       throw new KnipExecutionError(
         "Knip execution failed with no stdout output",
         stdout,
         stderr,
-        exitCode
+        exitCode,
       );
     }
   }
@@ -256,34 +348,42 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
       "Failed to parse Knip output as JSON",
       stdout,
       stderr,
-      exitCode
+      exitCode,
     );
   }
 
   // Validate the structure
   try {
     validateKnipReportStructure(parsedData);
-  } catch (validationError: any) {
+  } catch (validationError: unknown) {
+    const message =
+      validationError instanceof Error
+        ? validationError.message
+        : "Unexpected validation error";
     throw new KnipExecutionError(
-      `Knip output validation failed: ${validationError.message}`,
+      `Knip output validation failed: ${message}`,
       stdout,
       stderr,
-      exitCode
+      exitCode,
     );
   }
 
   // If we got here, the output is valid
   fs.writeFileSync(outputFile, stdout);
   console.log(`Raw output saved to ${outputFile}`);
-  
+
   if (exitCode === 0) {
     console.log("Knip completed successfully with no findings");
   } else if (exitCode === 1) {
-    console.log("Knip found unused code (exit code 1) - this is expected behavior");
+    console.log(
+      "Knip found unused code (exit code 1) - this is expected behavior",
+    );
   } else {
-    console.log(`Knip completed with exit code ${exitCode} - output validated and accepted`);
+    console.log(
+      `Knip completed with exit code ${exitCode} - output validated and accepted`,
+    );
   }
-  
+
   return stdout;
 }
 
@@ -291,44 +391,55 @@ function calculateHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
-function generateProcessedReport(rawContent: string, outputFile: string): NormalizedFinding[] {
+function generateProcessedReport(
+  rawContent: string,
+  outputFile: string,
+): NormalizedFinding[] {
   console.log("Parsing and filtering Knip report...");
   const knipReport = JSON.parse(rawContent) as KnipReport;
   const findings = parseKnipReport(knipReport);
-  
+
   fs.writeFileSync(outputFile, JSON.stringify(findings, null, 2));
   console.log(`Processed report saved to ${outputFile}`);
-  
+
   return findings;
 }
 
-function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, reportFile: string, scanMode: string): void {
+function generateMarkdownReport(
+  findings: NormalizedFinding[],
+  metadata: ScanMetadata,
+  reportFile: string,
+  scanMode: string,
+): void {
   console.log("Generating markdown report...");
-  
+
   const totalFindings = findings.length;
-  const files = findings.filter(f => f.issueType === "files");
-  const exports = findings.filter(f => f.issueType === "exports");
-  const types = findings.filter(f => f.issueType === "types");
-  const enumMembers = findings.filter(f => f.issueType === "enumMembers");
-  
-  const reportTitle = scanMode === "production" ? "Production Code Unused Findings Report" : "Production Plus Tests Unused Findings Report";
+  const files = findings.filter((f) => f.issueType === "files");
+  const exports = findings.filter((f) => f.issueType === "exports");
+  const types = findings.filter((f) => f.issueType === "types");
+  const enumMembers = findings.filter((f) => f.issueType === "enumMembers");
+
+  const reportTitle =
+    scanMode === "production"
+      ? "Production Code Unused Findings Report"
+      : "Production Plus Tests Unused Findings Report";
 
   let markdown = `# ${reportTitle}\n\n`;
   markdown += `**Total Findings:** ${totalFindings}\n\n`;
-  
+
   markdown += `## Summary\n\n`;
   markdown += `- **Files:** ${files.length}\n`;
   markdown += `- **Exports:** ${exports.length}\n`;
   markdown += `- **Types:** ${types.length}\n`;
   markdown += `- **Enum Members:** ${enumMembers.length}\n\n`;
-  
+
   markdown += `## Breakdown by Issue Type\n\n`;
-  
+
   if (files.length > 0) {
     markdown += `### Files (${files.length})\n\n`;
     markdown += `| Path |\n`;
     markdown += `|------|\n`;
-    files.slice(0, 10).forEach(f => {
+    files.slice(0, 10).forEach((f) => {
       markdown += `| ${f.normalizedPath} |\n`;
     });
     if (files.length > 10) {
@@ -336,12 +447,12 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (exports.length > 0) {
     markdown += `### Exports (${exports.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
     markdown += `|--------|------|------|\n`;
-    exports.slice(0, 10).forEach(f => {
+    exports.slice(0, 10).forEach((f) => {
       markdown += `| ${f.symbolName} | ${f.normalizedPath} | ${f.line} |\n`;
     });
     if (exports.length > 10) {
@@ -349,12 +460,12 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (types.length > 0) {
     markdown += `### Types (${types.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
     markdown += `|--------|------|------|\n`;
-    types.slice(0, 10).forEach(f => {
+    types.slice(0, 10).forEach((f) => {
       markdown += `| ${f.symbolName} | ${f.normalizedPath} | ${f.line} |\n`;
     });
     if (types.length > 10) {
@@ -362,12 +473,12 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (enumMembers.length > 0) {
     markdown += `### Enum Members (${enumMembers.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
     markdown += `|--------|------|------|\n`;
-    enumMembers.slice(0, 10).forEach(f => {
+    enumMembers.slice(0, 10).forEach((f) => {
       markdown += `| ${f.symbolName} | ${f.normalizedPath} | ${f.line} |\n`;
     });
     if (enumMembers.length > 10) {
@@ -375,21 +486,29 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   markdown += `## Metadata\n\n`;
   markdown += `- **Raw Report Hash:** ${metadata.rawHash}\n`;
   markdown += `- **Processed Report Hash:** ${metadata.processedHash}\n`;
   markdown += `- **Scan Mode:** ${scanMode}\n\n`;
-  
+
   fs.writeFileSync(reportFile, markdown);
   console.log(`Markdown report saved to ${reportFile}`);
 }
 
-function generateMetadata(rawContent: string, processedContent: string, scanMode: string, metadataFile: string, rawReportPath: string, processedReportPath: string, reportPath: string): any {
+function generateMetadata(
+  rawContent: string,
+  processedContent: string,
+  scanMode: string,
+  metadataFile: string,
+  rawReportPath: string,
+  processedReportPath: string,
+  reportPath: string,
+): ScanMetadata {
   const timestamp = new Date().toISOString();
   const rawHash = calculateHash(rawContent);
   const processedHash = calculateHash(processedContent);
-  
+
   const metadata = {
     timestamp,
     scanMode,
@@ -399,46 +518,70 @@ function generateMetadata(rawContent: string, processedContent: string, scanMode
     processedReportPath,
     reportPath,
   };
-  
+
   fs.writeFileSync(metadataFile, JSON.stringify(metadata, null, 2));
   console.log(`Metadata saved to ${metadataFile}`);
-  
+
   return metadata;
 }
 
 function displayStatistics(findings: NormalizedFinding[]): void {
   console.log("\n=== Statistics ===");
   console.log(`Total findings: ${findings.length}`);
-  
-  const byType = findings.reduce((acc, f) => {
-    acc[f.issueType] = (acc[f.issueType] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  
+
+  const byType = findings.reduce(
+    (acc, f) => {
+      acc[f.issueType] = (acc[f.issueType] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+
   console.log("\nBreakdown by issue type:");
-  Object.entries(byType).sort().forEach(([type, count]) => {
-    console.log(`  ${type}: ${count}`);
-  });
-  
+  Object.entries(byType)
+    .sort()
+    .forEach(([type, count]) => {
+      console.log(`  ${type}: ${count}`);
+    });
+
   console.log("\n=== Sample Findings ===");
   const samples = findings.slice(0, 5);
-  samples.forEach(f => {
-    console.log(`  ${f.issueType}: ${f.normalizedPath}${f.symbolName ? ` (${f.symbolName})` : ""}`);
+  samples.forEach((f) => {
+    console.log(
+      `  ${f.issueType}: ${f.normalizedPath}${f.symbolName ? ` (${f.symbolName})` : ""}`,
+    );
   });
-  
+
   if (findings.length > 5) {
     console.log(`  ... and ${findings.length - 5} more`);
   }
 }
 
-export function runScan(configFile: string, rawFile: string, processedFile: string, reportFile: string, metadataFile: string, scanMode: string): NormalizedFinding[] {
-  console.log(`\n=== ${scanMode.charAt(0).toUpperCase() + scanMode.slice(1)} Scan Runner ===\n`);
+export function runScan(
+  configFile: string,
+  rawFile: string,
+  processedFile: string,
+  reportFile: string,
+  metadataFile: string,
+  scanMode: string,
+): NormalizedFinding[] {
+  console.log(
+    `\n=== ${scanMode.charAt(0).toUpperCase() + scanMode.slice(1)} Scan Runner ===\n`,
+  );
 
   const rawContent = captureRawKnipOutput(configFile, rawFile, scanMode);
   const findings = generateProcessedReport(rawContent, processedFile);
   const processedContent = fs.readFileSync(processedFile, "utf-8");
 
-  const metadata = generateMetadata(rawContent, processedContent, scanMode, metadataFile, rawFile, processedFile, reportFile);
+  const metadata = generateMetadata(
+    rawContent,
+    processedContent,
+    scanMode,
+    metadataFile,
+    rawFile,
+    processedFile,
+    reportFile,
+  );
   generateMarkdownReport(findings, metadata, reportFile, scanMode);
 
   displayStatistics(findings);
@@ -457,7 +600,9 @@ function main(): void {
 
     const validatedMode = validateMode(mode);
 
-    console.log(`=== ${validatedMode.charAt(0).toUpperCase() + validatedMode.slice(1)} Scan Runner ===`);
+    console.log(
+      `=== ${validatedMode.charAt(0).toUpperCase() + validatedMode.slice(1)} Scan Runner ===`,
+    );
     console.log(`Running ${validatedMode} scan with --production flag\n`);
 
     ensureReportsDirectory();
@@ -469,7 +614,7 @@ function main(): void {
       scanDefinition.processedOutputFile,
       scanDefinition.reportFile,
       scanDefinition.metadataFile,
-      scanDefinition.modeName
+      scanDefinition.modeName,
     );
 
     console.log("\n=== Scan Complete ===");
@@ -491,13 +636,21 @@ function main(): void {
         console.error("\nUsage: node dist/cli.js <mode>");
         console.error("\nValid modes:");
         console.error("  production          - Scan production code only");
-        console.error("  productionPlusTests - Scan production code with test/spec/story references");
-        console.error("  compare             - Compare production and productionPlusTests scans");
+        console.error(
+          "  productionPlusTests - Scan production code with test/spec/story references",
+        );
+        console.error(
+          "  compare             - Compare production and productionPlusTests scans",
+        );
       } else if (error.message.startsWith("Invalid mode")) {
         console.error("\nValid modes are:");
         console.error("  production          - Scan production code only");
-        console.error("  productionPlusTests - Scan production code with test/spec/story references");
-        console.error("  compare             - Compare production and productionPlusTests scans");
+        console.error(
+          "  productionPlusTests - Scan production code with test/spec/story references",
+        );
+        console.error(
+          "  compare             - Compare production and productionPlusTests scans",
+        );
       }
     } else {
       console.error(error);
@@ -510,33 +663,54 @@ function runComparisonMode(): void {
   console.log("=== Comparison Mode ===\n");
 
   if (!fs.existsSync(PROCESSED_PRODUCTION_FILE)) {
-    console.error(`Error: Production findings file not found: ${PROCESSED_PRODUCTION_FILE}`);
-    console.error("Please run 'npm run scan:production' first to generate the production scan results.");
+    console.error(
+      `Error: Production findings file not found: ${PROCESSED_PRODUCTION_FILE}`,
+    );
+    console.error(
+      "Please run 'npm run scan:production' first to generate the production scan results.",
+    );
     process.exit(1);
   }
 
   if (!fs.existsSync(PROCESSED_PRODUCTION_PLUS_TESTS_FILE)) {
-    console.error(`Error: ProductionPlusTests findings file not found: ${PROCESSED_PRODUCTION_PLUS_TESTS_FILE}`);
-    console.error("Please run 'npm run scan:productionPlusTests' first to generate the productionPlusTests scan results.");
+    console.error(
+      `Error: ProductionPlusTests findings file not found: ${PROCESSED_PRODUCTION_PLUS_TESTS_FILE}`,
+    );
+    console.error(
+      "Please run 'npm run scan:productionPlusTests' first to generate the productionPlusTests scan results.",
+    );
     process.exit(1);
   }
 
-  const productionFindings: NormalizedFinding[] = JSON.parse(fs.readFileSync(PROCESSED_PRODUCTION_FILE, "utf-8"));
-  const productionPlusTestsFindings: NormalizedFinding[] = JSON.parse(fs.readFileSync(PROCESSED_PRODUCTION_PLUS_TESTS_FILE, "utf-8"));
+  const productionFindings: NormalizedFinding[] = JSON.parse(
+    fs.readFileSync(PROCESSED_PRODUCTION_FILE, "utf-8"),
+  );
+  const productionPlusTestsFindings: NormalizedFinding[] = JSON.parse(
+    fs.readFileSync(PROCESSED_PRODUCTION_PLUS_TESTS_FILE, "utf-8"),
+  );
 
-  const comparison = compareFindings(productionFindings, productionPlusTestsFindings);
+  const comparison = compareFindings(
+    productionFindings,
+    productionPlusTestsFindings,
+  );
 
   console.log("\n=== Comparison Results ===\n");
   console.log(`Shared findings: ${comparison.sharedCount}`);
   console.log(`Production-only findings: ${comparison.productionOnlyCount}`);
-  console.log(`ProductionPlusTests-only findings: ${comparison.productionPlusTestsOnlyCount}`);
+  console.log(
+    `ProductionPlusTests-only findings: ${comparison.productionPlusTestsOnlyCount}`,
+  );
   console.log(`\nTotal production findings: ${productionFindings.length}`);
-  console.log(`Total productionPlusTests findings: ${productionPlusTestsFindings.length}`);
+  console.log(
+    `Total productionPlusTests findings: ${productionPlusTestsFindings.length}`,
+  );
 
   if (comparison.productionOnly.length > 0) {
     console.log("\n=== Production-Only Findings ===\n");
-    comparison.productionOnly.slice(0, 10).forEach(finding => {
-      console.log(`  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`);
+    comparison.productionOnly.slice(0, 10).forEach((finding) => {
+      console.log(
+        `  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`,
+      );
     });
     if (comparison.productionOnly.length > 10) {
       console.log(`  ... and ${comparison.productionOnly.length - 10} more`);
@@ -545,11 +719,15 @@ function runComparisonMode(): void {
 
   if (comparison.productionPlusTestsOnly.length > 0) {
     console.log("\n=== ProductionPlusTests-Only Findings ===\n");
-    comparison.productionPlusTestsOnly.slice(0, 10).forEach(finding => {
-      console.log(`  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`);
+    comparison.productionPlusTestsOnly.slice(0, 10).forEach((finding) => {
+      console.log(
+        `  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`,
+      );
     });
     if (comparison.productionPlusTestsOnly.length > 10) {
-      console.log(`  ... and ${comparison.productionPlusTestsOnly.length - 10} more`);
+      console.log(
+        `  ... and ${comparison.productionPlusTestsOnly.length - 10} more`,
+      );
     }
   }
 

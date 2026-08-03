@@ -93,6 +93,7 @@ jobs:
         env:
           BATCH_DIGEST: ${{ steps.metadata.outputs.batch_digest }}
           COMMIT_SHA: ${{ steps.metadata.outputs.commit_sha }}
+          MAINTENANCE_LABEL: maintenance-automation
         with:
           script: |
             const fs = require('fs');
@@ -107,11 +108,27 @@ jobs:
             const shortSha = process.env.COMMIT_SHA.slice(0, 12);
             const shortDigest = process.env.BATCH_DIGEST.slice(0, 12);
             const title = `Maintenance evidence ${shortSha} (${shortDigest})`;
+            const labelName = process.env.MAINTENANCE_LABEL;
             const { owner, repo } = context.repo;
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: labelName });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: labelName,
+                color: '0969da',
+                description: 'Evidence prepared by the maintenance automation',
+              });
+            }
+
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner,
               repo,
               state: 'all',
+              labels: labelName,
               per_page: 100,
             });
             const existing = issues.find(
@@ -126,11 +143,18 @@ jobs:
                 issue_number: existing.number,
                 title,
                 body,
+                labels: [labelName],
               });
               core.setOutput('issue-url', existing.html_url);
               core.setOutput('operation', 'updated');
             } else {
-              const created = await github.rest.issues.create({ owner, repo, title, body });
+              const created = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: [labelName],
+              });
               core.setOutput('issue-url', created.data.html_url);
               core.setOutput('operation', 'created');
             }
@@ -139,6 +163,7 @@ jobs:
         working-directory: maintenance-automation
         shell: bash
         env:
+          ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
           ISSUE_OPERATION: ${{ steps.issue.outputs.operation }}
           ISSUE_URL: ${{ steps.issue.outputs.issue-url }}
         run: |
@@ -147,7 +172,7 @@ jobs:
             echo
             echo "## Automation boundary"
             echo
-            echo "- Reports artifact: \`${{ steps.metadata.outputs.artifact_name }}\`"
+            echo "- Reports artifact: \`$ARTIFACT_NAME\`"
             echo "- Repository prerequisite: configure required reviewers on the protected \`maintenance-approval\` environment."
             if [ -n "$ISSUE_URL" ]; then
               echo "- Remediation issue: [$ISSUE_OPERATION]($ISSUE_URL)"
@@ -216,15 +241,21 @@ jobs:
 
       - name: Record validated approval
         shell: bash
+        env:
+          APPROVED_BATCH_DIGEST: ${{ needs.prepare.outputs.batch-digest }}
+          APPROVED_BATCH_SIZE: ${{ needs.prepare.outputs.batch-size }}
+          APPROVED_COMMIT_SHA: ${{ needs.prepare.outputs.commit-sha }}
+          APPROVED_REPOSITORY: ${{ needs.prepare.outputs.repository }}
+          APPROVED_RUN_ID: ${{ needs.prepare.outputs.run-id }}
         run: |
           {
             echo "# Maintenance approval validated"
             echo
-            echo "- Repository: \`${{ needs.prepare.outputs.repository }}\`"
-            echo "- Commit: \`${{ needs.prepare.outputs.commit-sha }}\`"
-            echo "- Workflow run: \`${{ needs.prepare.outputs.run-id }}\`"
-            echo "- Batch digest: \`${{ needs.prepare.outputs.batch-digest }}\`"
-            echo "- Selected evidence: ${{ needs.prepare.outputs.batch-size }}"
+            echo "- Repository: \`$APPROVED_REPOSITORY\`"
+            echo "- Commit: \`$APPROVED_COMMIT_SHA\`"
+            echo "- Workflow run: \`$APPROVED_RUN_ID\`"
+            echo "- Batch digest: \`$APPROVED_BATCH_DIGEST\`"
+            echo "- Selected evidence: $APPROVED_BATCH_SIZE"
             echo
             echo "No external remediation API is called in this checkpoint."
           } >> "$GITHUB_STEP_SUMMARY"
