@@ -50,13 +50,118 @@ class KnipExecutionError extends Error implements KnipExecutionError {
   }
 }
 
-export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, KnipReport };
+export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, KnipReport, validateMode, type ScanMode, type ComparisonResult, compareFindings, type ScanDefinition, getScanDefinition, buildKnipCommand };
+
+type ScanMode = "production" | "productionPlusTests";
+
+interface ScanDefinition {
+  modeName: ScanMode;
+  configFile: string;
+  rawOutputFile: string;
+  processedOutputFile: string;
+  reportFile: string;
+  metadataFile: string;
+}
+
+interface ComparisonResult {
+  sharedCount: number;
+  productionOnlyCount: number;
+  productionPlusTestsOnlyCount: number;
+  productionOnly: NormalizedFinding[];
+  productionPlusTestsOnly: NormalizedFinding[];
+}
+
+const VALID_MODES: ScanMode[] = ["production", "productionPlusTests"];
+
+function getScanDefinition(mode: ScanMode): ScanDefinition {
+  const scanDefinitions: Record<ScanMode, ScanDefinition> = {
+    production: {
+      modeName: "production",
+      configFile: "knip.json",
+      rawOutputFile: RAW_PRODUCTION_FILE,
+      processedOutputFile: PROCESSED_PRODUCTION_FILE,
+      reportFile: PRODUCTION_REPORT_FILE,
+      metadataFile: PRODUCTION_METADATA_FILE,
+    },
+    productionPlusTests: {
+      modeName: "productionPlusTests",
+      configFile: "knip-production-plus-tests.json",
+      rawOutputFile: RAW_PRODUCTION_PLUS_TESTS_FILE,
+      processedOutputFile: PROCESSED_PRODUCTION_PLUS_TESTS_FILE,
+      reportFile: PRODUCTION_PLUS_TESTS_REPORT_FILE,
+      metadataFile: PRODUCTION_PLUS_TESTS_METADATA_FILE,
+    },
+  };
+
+  return scanDefinitions[mode];
+}
+
+function buildKnipCommand(scanDefinition: ScanDefinition): string {
+  return `knip --directory ../superset-frontend --config ../maintenance-automation/${scanDefinition.configFile} --production --include files,exports,types,enumMembers --reporter json`;
+}
+
+function validateMode(mode: string | undefined): ScanMode {
+  if (mode === undefined) {
+    throw new Error("Missing required mode argument");
+  }
+
+  if (!VALID_MODES.includes(mode as ScanMode)) {
+    throw new Error(`Invalid mode '${mode}'`);
+  }
+
+  return mode as ScanMode;
+}
+
+function createFindingKey(finding: NormalizedFinding): string {
+  return `${finding.issueType}|${finding.normalizedPath}|${finding.symbolName || ""}`;
+}
+
+function compareFindings(productionFindings: NormalizedFinding[], productionPlusTestsFindings: NormalizedFinding[]): ComparisonResult {
+  const productionSet = new Set(productionFindings.map(createFindingKey));
+  const productionPlusTestsSet = new Set(productionPlusTestsFindings.map(createFindingKey));
+
+  const shared: NormalizedFinding[] = [];
+  const productionOnly: NormalizedFinding[] = [];
+  const productionPlusTestsOnly: NormalizedFinding[] = [];
+
+  for (const finding of productionFindings) {
+    const key = createFindingKey(finding);
+    if (productionPlusTestsSet.has(key)) {
+      shared.push(finding);
+    } else {
+      productionOnly.push(finding);
+    }
+  }
+
+  for (const finding of productionPlusTestsFindings) {
+    const key = createFindingKey(finding);
+    if (!productionSet.has(key)) {
+      productionPlusTestsOnly.push(finding);
+    }
+  }
+
+  return {
+    sharedCount: shared.length,
+    productionOnlyCount: productionOnly.length,
+    productionPlusTestsOnlyCount: productionPlusTestsOnly.length,
+    productionOnly,
+    productionPlusTestsOnly,
+  };
+}
 
 const REPORTS_DIR = path.join(__dirname, "..", "reports");
-const RAW_OUTPUT_FILE = path.join(REPORTS_DIR, "raw-production.json");
-const PROCESSED_OUTPUT_FILE = path.join(REPORTS_DIR, "processed-production.json");
-const REPORT_FILE = path.join(REPORTS_DIR, "production-report.md");
-const METADATA_FILE = path.join(REPORTS_DIR, "production-metadata.json");
+
+// Production scan files
+const RAW_PRODUCTION_FILE = path.join(REPORTS_DIR, "raw-production.json");
+const PROCESSED_PRODUCTION_FILE = path.join(REPORTS_DIR, "processed-production.json");
+const PRODUCTION_REPORT_FILE = path.join(REPORTS_DIR, "production-report.md");
+const PRODUCTION_METADATA_FILE = path.join(REPORTS_DIR, "production-metadata.json");
+
+// Production Plus Tests scan files
+const RAW_PRODUCTION_PLUS_TESTS_FILE = path.join(REPORTS_DIR, "raw-productionPlusTests.json");
+const PROCESSED_PRODUCTION_PLUS_TESTS_FILE = path.join(REPORTS_DIR, "processed-productionPlusTests.json");
+const PRODUCTION_PLUS_TESTS_REPORT_FILE = path.join(REPORTS_DIR, "productionPlusTests-report.md");
+const PRODUCTION_PLUS_TESTS_METADATA_FILE = path.join(REPORTS_DIR, "productionPlusTests-metadata.json");
 
 function ensureReportsDirectory(): void {
   if (!fs.existsSync(REPORTS_DIR)) {
@@ -86,16 +191,19 @@ function validateKnipReportStructure(data: unknown): data is KnipReport {
   return true;
 }
 
-function captureRawKnipOutput(): string {
-  console.log("Capturing raw Knip output...");
-  
+function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: string): string {
+  console.log(`Capturing raw Knip output for ${scanMode} mode...`);
+
+  const scanDefinition = getScanDefinition(scanMode as ScanMode);
+  const command = buildKnipCommand(scanDefinition);
+
   let stdout: string;
   let stderr: string;
   let exitCode: number | undefined;
 
   try {
     stdout = execSync(
-      "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers --reporter json",
+      command,
       {
         cwd: path.join(__dirname, ".."),
         encoding: "utf-8",
@@ -109,7 +217,7 @@ function captureRawKnipOutput(): string {
     stdout = error.stdout || "";
     stderr = error.stderr || "";
     exitCode = error.status || error.exitCode || 1;
-    
+
     if (!stdout) {
       throw new KnipExecutionError(
         "Knip execution failed with no stdout output",
@@ -146,8 +254,8 @@ function captureRawKnipOutput(): string {
   }
 
   // If we got here, the output is valid
-  fs.writeFileSync(RAW_OUTPUT_FILE, stdout);
-  console.log(`Raw output saved to ${RAW_OUTPUT_FILE}`);
+  fs.writeFileSync(outputFile, stdout);
+  console.log(`Raw output saved to ${outputFile}`);
   
   if (exitCode === 0) {
     console.log("Knip completed successfully with no findings");
@@ -164,18 +272,18 @@ function calculateHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
-function generateProcessedReport(rawContent: string): NormalizedFinding[] {
+function generateProcessedReport(rawContent: string, outputFile: string): NormalizedFinding[] {
   console.log("Parsing and filtering Knip report...");
   const knipReport = JSON.parse(rawContent) as KnipReport;
   const findings = parseKnipReport(knipReport);
   
-  fs.writeFileSync(PROCESSED_OUTPUT_FILE, JSON.stringify(findings, null, 2));
-  console.log(`Processed report saved to ${PROCESSED_OUTPUT_FILE}`);
+  fs.writeFileSync(outputFile, JSON.stringify(findings, null, 2));
+  console.log(`Processed report saved to ${outputFile}`);
   
   return findings;
 }
 
-function generateMarkdownReport(findings: NormalizedFinding[], metadata: any): void {
+function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, reportFile: string, scanMode: string): void {
   console.log("Generating markdown report...");
   
   const totalFindings = findings.length;
@@ -184,7 +292,9 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any): v
   const types = findings.filter(f => f.issueType === "types");
   const enumMembers = findings.filter(f => f.issueType === "enumMembers");
   
-  let markdown = `# Production Code Unused Findings Report\n\n`;
+  const reportTitle = scanMode === "production" ? "Production Code Unused Findings Report" : "Production Plus Tests Unused Findings Report";
+
+  let markdown = `# ${reportTitle}\n\n`;
   markdown += `**Total Findings:** ${totalFindings}\n\n`;
   
   markdown += `## Summary\n\n`;
@@ -250,29 +360,29 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any): v
   markdown += `## Metadata\n\n`;
   markdown += `- **Raw Report Hash:** ${metadata.rawHash}\n`;
   markdown += `- **Processed Report Hash:** ${metadata.processedHash}\n`;
-  markdown += `- **Scan Mode:** production\n\n`;
+  markdown += `- **Scan Mode:** ${scanMode}\n\n`;
   
-  fs.writeFileSync(REPORT_FILE, markdown);
-  console.log(`Markdown report saved to ${REPORT_FILE}`);
+  fs.writeFileSync(reportFile, markdown);
+  console.log(`Markdown report saved to ${reportFile}`);
 }
 
-function generateMetadata(rawContent: string, processedContent: string): any {
+function generateMetadata(rawContent: string, processedContent: string, scanMode: string, metadataFile: string, rawReportPath: string, processedReportPath: string, reportPath: string): any {
   const timestamp = new Date().toISOString();
   const rawHash = calculateHash(rawContent);
   const processedHash = calculateHash(processedContent);
   
   const metadata = {
     timestamp,
-    scanMode: "production",
+    scanMode,
     rawHash,
     processedHash,
-    rawReportPath: RAW_OUTPUT_FILE,
-    processedReportPath: PROCESSED_OUTPUT_FILE,
-    reportPath: REPORT_FILE,
+    rawReportPath,
+    processedReportPath,
+    reportPath,
   };
   
-  fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2));
-  console.log(`Metadata saved to ${METADATA_FILE}`);
+  fs.writeFileSync(metadataFile, JSON.stringify(metadata, null, 2));
+  console.log(`Metadata saved to ${metadataFile}`);
   
   return metadata;
 }
@@ -302,22 +412,50 @@ function displayStatistics(findings: NormalizedFinding[]): void {
   }
 }
 
+function runScan(configFile: string, rawFile: string, processedFile: string, reportFile: string, metadataFile: string, scanMode: string): NormalizedFinding[] {
+  console.log(`\n=== ${scanMode.charAt(0).toUpperCase() + scanMode.slice(1)} Scan Runner ===\n`);
+
+  const rawContent = captureRawKnipOutput(configFile, rawFile, scanMode);
+  const findings = generateProcessedReport(rawContent, processedFile);
+  const processedContent = fs.readFileSync(processedFile, "utf-8");
+
+  const metadata = generateMetadata(rawContent, processedContent, scanMode, metadataFile, rawFile, processedFile, reportFile);
+  generateMarkdownReport(findings, metadata, reportFile, scanMode);
+
+  displayStatistics(findings);
+
+  return findings;
+}
+
 function main(): void {
   try {
-    console.log("=== Production Scan Runner ===\n");
-    
+    const mode = process.argv[2];
+
+    if (mode === "compare") {
+      runComparisonMode();
+      return;
+    }
+
+    const validatedMode = validateMode(mode);
+
+    console.log(`=== ${validatedMode.charAt(0).toUpperCase() + validatedMode.slice(1)} Scan Runner ===`);
+    console.log(`Running ${validatedMode} scan with --production flag\n`);
+
     ensureReportsDirectory();
-    const rawContent = captureRawKnipOutput();
-    const findings = generateProcessedReport(rawContent);
-    const processedContent = fs.readFileSync(PROCESSED_OUTPUT_FILE, "utf-8");
-    
-    const metadata = generateMetadata(rawContent, processedContent);
-    generateMarkdownReport(findings, metadata);
-    
-    displayStatistics(findings);
-    
+
+    const scanDefinition = getScanDefinition(validatedMode);
+    const findings = runScan(
+      scanDefinition.configFile,
+      scanDefinition.rawOutputFile,
+      scanDefinition.processedOutputFile,
+      scanDefinition.reportFile,
+      scanDefinition.metadataFile,
+      scanDefinition.modeName
+    );
+
     console.log("\n=== Scan Complete ===");
     console.log(`Reports generated in: ${REPORTS_DIR}`);
+    console.log(`\nTotal findings: ${findings.length}`);
   } catch (error) {
     console.error("\n=== Scan Failed ===");
     if (error instanceof KnipExecutionError) {
@@ -328,11 +466,75 @@ function main(): void {
       }
     } else if (error instanceof KnipValidationError) {
       console.error("Knip validation error:", error.message);
+    } else if (error instanceof Error) {
+      console.error(error.message);
+      if (error.message === "Missing required mode argument") {
+        console.error("\nUsage: node dist/cli.js <mode>");
+        console.error("\nValid modes:");
+        console.error("  production          - Scan production code only");
+        console.error("  productionPlusTests - Scan production code with test/spec/story references");
+        console.error("  compare             - Compare production and productionPlusTests scans");
+      } else if (error.message.startsWith("Invalid mode")) {
+        console.error("\nValid modes are:");
+        console.error("  production          - Scan production code only");
+        console.error("  productionPlusTests - Scan production code with test/spec/story references");
+        console.error("  compare             - Compare production and productionPlusTests scans");
+      }
     } else {
       console.error(error);
     }
     process.exit(1);
   }
+}
+
+function runComparisonMode(): void {
+  console.log("=== Comparison Mode ===\n");
+
+  if (!fs.existsSync(PROCESSED_PRODUCTION_FILE)) {
+    console.error(`Error: Production findings file not found: ${PROCESSED_PRODUCTION_FILE}`);
+    console.error("Please run 'npm run scan:production' first to generate the production scan results.");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(PROCESSED_PRODUCTION_PLUS_TESTS_FILE)) {
+    console.error(`Error: ProductionPlusTests findings file not found: ${PROCESSED_PRODUCTION_PLUS_TESTS_FILE}`);
+    console.error("Please run 'npm run scan:productionPlusTests' first to generate the productionPlusTests scan results.");
+    process.exit(1);
+  }
+
+  const productionFindings: NormalizedFinding[] = JSON.parse(fs.readFileSync(PROCESSED_PRODUCTION_FILE, "utf-8"));
+  const productionPlusTestsFindings: NormalizedFinding[] = JSON.parse(fs.readFileSync(PROCESSED_PRODUCTION_PLUS_TESTS_FILE, "utf-8"));
+
+  const comparison = compareFindings(productionFindings, productionPlusTestsFindings);
+
+  console.log("\n=== Comparison Results ===\n");
+  console.log(`Shared findings: ${comparison.sharedCount}`);
+  console.log(`Production-only findings: ${comparison.productionOnlyCount}`);
+  console.log(`ProductionPlusTests-only findings: ${comparison.productionPlusTestsOnlyCount}`);
+  console.log(`\nTotal production findings: ${productionFindings.length}`);
+  console.log(`Total productionPlusTests findings: ${productionPlusTestsFindings.length}`);
+
+  if (comparison.productionOnly.length > 0) {
+    console.log("\n=== Production-Only Findings ===\n");
+    comparison.productionOnly.slice(0, 10).forEach(finding => {
+      console.log(`  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`);
+    });
+    if (comparison.productionOnly.length > 10) {
+      console.log(`  ... and ${comparison.productionOnly.length - 10} more`);
+    }
+  }
+
+  if (comparison.productionPlusTestsOnly.length > 0) {
+    console.log("\n=== ProductionPlusTests-Only Findings ===\n");
+    comparison.productionPlusTestsOnly.slice(0, 10).forEach(finding => {
+      console.log(`  ${finding.issueType}: ${finding.normalizedPath}${finding.symbolName ? ` (${finding.symbolName})` : ""}`);
+    });
+    if (comparison.productionPlusTestsOnly.length > 10) {
+      console.log(`  ... and ${comparison.productionPlusTestsOnly.length - 10} more`);
+    }
+  }
+
+  console.log("\n=== Comparison Complete ===");
 }
 
 // Only run main if this file is executed directly (not imported)

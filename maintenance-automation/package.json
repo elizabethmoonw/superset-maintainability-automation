@@ -10,7 +10,9 @@
     "scan": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers",
     "scan:all": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --include files,exports,types,enumMembers",
     "scan:prod": "knip --directory ../superset-frontend --config ../maintenance-automation/knip.json --production --include files,exports,types,enumMembers",
-    "scan:production": "npm run build && node dist/cli.js"
+    "scan:production": "npm run build && node dist/cli.js production",
+    "scan:productionPlusTests": "npm run build && node dist/cli.js productionPlusTests",
+    "compare": "npm run build && node dist/cli.js compare"
   },
   "keywords": [],
   "author": "",
