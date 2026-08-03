@@ -51,7 +51,7 @@ class KnipExecutionError extends Error implements KnipExecutionError {
 }
 
 export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, validateMode, compareFindings, getScanDefinition, buildKnipCommand };
-export type { ScanMode, ComparisonResult, ScanDefinition, NormalizedFinding, KnipReport };
+export type { ScanMode, ComparisonResult, ScanDefinition, ScanMetadata, NormalizedFinding, KnipReport };
 
 type ScanMode = "production" | "productionPlusTests";
 
@@ -62,6 +62,16 @@ interface ScanDefinition {
   processedOutputFile: string;
   reportFile: string;
   metadataFile: string;
+}
+
+interface ScanMetadata {
+  timestamp: string;
+  scanMode: string;
+  rawHash: string;
+  processedHash: string;
+  rawReportPath: string;
+  processedReportPath: string;
+  reportPath: string;
 }
 
 interface ComparisonResult {
@@ -176,14 +186,19 @@ function validateKnipReportStructure(data: unknown): data is KnipReport {
   }
 
   const report = data as Record<string, unknown>;
-  
+
   if (!("issues" in report) || !Array.isArray(report.issues)) {
     throw new KnipValidationError("Knip output does not contain valid 'issues' array");
   }
 
   // Validate that each issue has a file property and optional arrays
   for (const issue of report.issues) {
-    if (typeof issue !== "object" || issue === null || !("file" in issue) || (issue as any).file === null) {
+    if (
+      typeof issue !== "object" ||
+      issue === null ||
+      !("file" in issue) ||
+      (issue as Record<string, unknown>).file === null
+    ) {
       throw new KnipValidationError("Each issue must have a non-null 'file' property");
     }
     // The arrays are optional, so we don't need to validate their presence
@@ -228,11 +243,12 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
     );
     stderr = "";
     exitCode = 0;
-  } catch (error: any) {
+  } catch (error) {
     // Knip returns exit code 1 when it finds issues, but stdout still contains the JSON
-    stdout = error.stdout || "";
-    stderr = error.stderr || "";
-    exitCode = error.status || error.exitCode || 1;
+    const execError = error as { stdout?: string; stderr?: string; status?: number; exitCode?: number };
+    stdout = execError.stdout || "";
+    stderr = execError.stderr || "";
+    exitCode = execError.status || execError.exitCode || 1;
 
     if (!stdout) {
       throw new KnipExecutionError(
@@ -263,9 +279,11 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
   // Validate the structure
   try {
     validateKnipReportStructure(parsedData);
-  } catch (validationError: any) {
+  } catch (validationError) {
+    const message =
+      validationError instanceof Error ? validationError.message : String(validationError);
     throw new KnipExecutionError(
-      `Knip output validation failed: ${validationError.message}`,
+      `Knip output validation failed: ${message}`,
       stdout,
       stderr,
       exitCode
@@ -275,7 +293,7 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
   // If we got here, the output is valid
   fs.writeFileSync(outputFile, stdout);
   console.log(`Raw output saved to ${outputFile}`);
-  
+
   if (exitCode === 0) {
     console.log("Knip completed successfully with no findings");
   } else if (exitCode === 1) {
@@ -283,7 +301,7 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
   } else {
     console.log(`Knip completed with exit code ${exitCode} - output validated and accepted`);
   }
-  
+
   return stdout;
 }
 
@@ -295,35 +313,35 @@ function generateProcessedReport(rawContent: string, outputFile: string): Normal
   console.log("Parsing and filtering Knip report...");
   const knipReport = JSON.parse(rawContent) as KnipReport;
   const findings = parseKnipReport(knipReport);
-  
+
   fs.writeFileSync(outputFile, JSON.stringify(findings, null, 2));
   console.log(`Processed report saved to ${outputFile}`);
-  
+
   return findings;
 }
 
-function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, reportFile: string, scanMode: string): void {
+function generateMarkdownReport(findings: NormalizedFinding[], metadata: ScanMetadata, reportFile: string, scanMode: string): void {
   console.log("Generating markdown report...");
-  
+
   const totalFindings = findings.length;
   const files = findings.filter(f => f.issueType === "files");
   const exports = findings.filter(f => f.issueType === "exports");
   const types = findings.filter(f => f.issueType === "types");
   const enumMembers = findings.filter(f => f.issueType === "enumMembers");
-  
+
   const reportTitle = scanMode === "production" ? "Production Code Unused Findings Report" : "Production Plus Tests Unused Findings Report";
 
   let markdown = `# ${reportTitle}\n\n`;
   markdown += `**Total Findings:** ${totalFindings}\n\n`;
-  
+
   markdown += `## Summary\n\n`;
   markdown += `- **Files:** ${files.length}\n`;
   markdown += `- **Exports:** ${exports.length}\n`;
   markdown += `- **Types:** ${types.length}\n`;
   markdown += `- **Enum Members:** ${enumMembers.length}\n\n`;
-  
+
   markdown += `## Breakdown by Issue Type\n\n`;
-  
+
   if (files.length > 0) {
     markdown += `### Files (${files.length})\n\n`;
     markdown += `| Path |\n`;
@@ -336,7 +354,7 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (exports.length > 0) {
     markdown += `### Exports (${exports.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
@@ -349,7 +367,7 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (types.length > 0) {
     markdown += `### Types (${types.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
@@ -362,7 +380,7 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   if (enumMembers.length > 0) {
     markdown += `### Enum Members (${enumMembers.length})\n\n`;
     markdown += `| Symbol | Path | Line |\n`;
@@ -375,22 +393,22 @@ function generateMarkdownReport(findings: NormalizedFinding[], metadata: any, re
     }
     markdown += `\n`;
   }
-  
+
   markdown += `## Metadata\n\n`;
   markdown += `- **Raw Report Hash:** ${metadata.rawHash}\n`;
   markdown += `- **Processed Report Hash:** ${metadata.processedHash}\n`;
   markdown += `- **Scan Mode:** ${scanMode}\n\n`;
-  
+
   fs.writeFileSync(reportFile, markdown);
   console.log(`Markdown report saved to ${reportFile}`);
 }
 
-function generateMetadata(rawContent: string, processedContent: string, scanMode: string, metadataFile: string, rawReportPath: string, processedReportPath: string, reportPath: string): any {
+function generateMetadata(rawContent: string, processedContent: string, scanMode: string, metadataFile: string, rawReportPath: string, processedReportPath: string, reportPath: string): ScanMetadata {
   const timestamp = new Date().toISOString();
   const rawHash = calculateHash(rawContent);
   const processedHash = calculateHash(processedContent);
-  
-  const metadata = {
+
+  const metadata: ScanMetadata = {
     timestamp,
     scanMode,
     rawHash,
@@ -399,33 +417,33 @@ function generateMetadata(rawContent: string, processedContent: string, scanMode
     processedReportPath,
     reportPath,
   };
-  
+
   fs.writeFileSync(metadataFile, JSON.stringify(metadata, null, 2));
   console.log(`Metadata saved to ${metadataFile}`);
-  
+
   return metadata;
 }
 
 function displayStatistics(findings: NormalizedFinding[]): void {
   console.log("\n=== Statistics ===");
   console.log(`Total findings: ${findings.length}`);
-  
+
   const byType = findings.reduce((acc, f) => {
     acc[f.issueType] = (acc[f.issueType] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
-  
+
   console.log("\nBreakdown by issue type:");
   Object.entries(byType).sort().forEach(([type, count]) => {
     console.log(`  ${type}: ${count}`);
   });
-  
+
   console.log("\n=== Sample Findings ===");
   const samples = findings.slice(0, 5);
   samples.forEach(f => {
     console.log(`  ${f.issueType}: ${f.normalizedPath}${f.symbolName ? ` (${f.symbolName})` : ""}`);
   });
-  
+
   if (findings.length > 5) {
     console.log(`  ... and ${findings.length - 5} more`);
   }

@@ -56,63 +56,59 @@ function hasTestOrStoryPath(finding: NormalizedFinding): boolean {
   return hasTestDirectory || hasTestFilePattern;
 }
 
-describe("Demo output validation", () => {
-  describe("Deterministic parser processing validation", () => {
-    test("processing identical parser input twice produces identical output", () => {
-      // Load a parser fixture (simulated Knip JSON output)
-      const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixture.json");
-      const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
-      const knipReport = JSON.parse(fixtureContent) as KnipReport;
+test("Deterministic parser processing validation: processing identical parser input twice produces identical output", () => {
+  // Load a parser fixture (simulated Knip JSON output)
+  const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixture.json");
+  const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
+  const knipReport = JSON.parse(fixtureContent) as KnipReport;
 
-      // Process the same input twice
-      const results1 = parseKnipReport(knipReport);
-      const results2 = parseKnipReport(knipReport);
+  // Process the same input twice
+  const results1 = parseKnipReport(knipReport);
+  const results2 = parseKnipReport(knipReport);
 
-      // Serialize both results
-      const serialized1 = JSON.stringify(results1);
-      const serialized2 = JSON.stringify(results2);
+  // Serialize both results
+  const serialized1 = JSON.stringify(results1);
+  const serialized2 = JSON.stringify(results2);
 
-      // Assert identical serialized output
-      expect(serialized1).toBe(serialized2);
+  // Assert identical serialized output
+  expect(serialized1).toBe(serialized2);
 
-      // Assert identical hashes
-      const hash1 = calculateHash(serialized1);
-      const hash2 = calculateHash(serialized2);
-      expect(hash1).toBe(hash2);
-    });
+  // Assert identical hashes
+  const hash1 = calculateHash(serialized1);
+  const hash2 = calculateHash(serialized2);
+  expect(hash1).toBe(hash2);
+});
 
-    test("productionPlusTests parser fixture has zero excluded-path violations", () => {
-      const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixtureProductionPlusTests.json");
-      const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
-      const knipReport = JSON.parse(fixtureContent) as KnipReport;
+test("Deterministic parser processing validation: productionPlusTests parser fixture has zero excluded-path violations", () => {
+  const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixtureProductionPlusTests.json");
+  const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
+  const knipReport = JSON.parse(fixtureContent) as KnipReport;
 
-      const results = parseKnipReport(knipReport);
-      const violations = results.filter(hasTestOrStoryPath);
+  const results = parseKnipReport(knipReport);
+  const violations = results.filter(hasTestOrStoryPath);
 
-      expect(violations).toHaveLength(0);
-    });
+  expect(violations).toHaveLength(0);
+});
 
-    test("production parser fixture has zero excluded-path violations", () => {
-      const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixture.json");
-      const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
-      const knipReport = JSON.parse(fixtureContent) as KnipReport;
+test("Deterministic parser processing validation: production parser fixture has zero excluded-path violations", () => {
+  const fixturePath = path.join(FIXTURE_DIR, "integrationTestFixture.json");
+  const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
+  const knipReport = JSON.parse(fixtureContent) as KnipReport;
 
-      const results = parseKnipReport(knipReport);
-      const violations = results.filter(hasTestOrStoryPath);
+  const results = parseKnipReport(knipReport);
+  const violations = results.filter(hasTestOrStoryPath);
 
-      expect(violations).toHaveLength(0);
-    });
+  expect(violations).toHaveLength(0);
+});
 
-    test("declaration files count as excluded-path violations", () => {
-      const declarationFinding: NormalizedFinding = {
-        normalizedPath: "src/types/generated.d.ts",
-        fileName: "generated.d.ts",
-        fileExtension: "ts",
-        filePath: "src/types/generated.d.ts",
-        issueType: "files",
-      };
+test("Deterministic parser processing validation: declaration files count as excluded-path violations", () => {
+  const declarationFinding: NormalizedFinding = {
+    normalizedPath: "src/types/generated.d.ts",
+    fileName: "generated.d.ts",
+    fileExtension: "ts",
+    filePath: "src/types/generated.d.ts",
+    issueType: "files",
+  };
 
-      expect(countExcludedPathViolations([declarationFinding])).toBe(1);
-    });
-  });
+  expect(countExcludedPathViolations([declarationFinding])).toBe(1);
 });
