@@ -21,6 +21,7 @@ import {
   compareFindings,
   KnipValidationError,
   validateKnipReportStructure,
+  validateKnipExitCode,
   validateMode,
   getScanDefinition,
   buildKnipCommand,
@@ -33,6 +34,19 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 describe("CLI Knip validation", () => {
+  describe("validateKnipExitCode", () => {
+    test("accepts Knip success and findings exit codes", () => {
+      expect(() => validateKnipExitCode(0)).not.toThrow();
+      expect(() => validateKnipExitCode(1)).not.toThrow();
+    });
+
+    test("rejects unexpected Knip exit codes", () => {
+      expect(() => validateKnipExitCode(2)).toThrow(
+        "Knip returned unexpected exit code 2",
+      );
+    });
+  });
+
   describe("validateMode", () => {
     test("accepts valid mode 'production'", () => {
       const result = validateMode("production");

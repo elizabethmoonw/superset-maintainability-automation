@@ -25,6 +25,14 @@ const realisticKnipReport = JSON.parse(
   fs.readFileSync(path.join(__dirname, "fixtures", "realisticKnipReport.json"), "utf-8")
 ) as KnipReport;
 
+const integrationTestFixture = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "integrationTestFixture.json"), "utf-8")
+) as KnipReport;
+
+const integrationTestFixtureProductionPlusTests = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "integrationTestFixtureProductionPlusTests.json"), "utf-8")
+) as KnipReport;
+
 describe("parseKnipReport", () => {
   describe("path derivation", () => {
     test("derives normalizedPath, fileName, and fileExtension from filePath", () => {
@@ -519,6 +527,176 @@ describe("parseKnipReport", () => {
       const results = parseKnipReport(report);
       expect(results).toHaveLength(1);
       expect(results[0].normalizedPath).toBe("src/components/Button.tsx");
+    });
+  });
+
+  describe("integration test fixture - reference scope behavior", () => {
+    test("proves production code referenced only by tests/stories is absent from productionPlusTests findings", () => {
+      const productionResults = parseKnipReport(integrationTestFixture);
+      const productionPlusTestsResults = parseKnipReport(integrationTestFixtureProductionPlusTests);
+
+      // Production scan includes all 5 production files
+      expect(productionResults).toHaveLength(5);
+
+      // ProductionPlusTests scan excludes files that are only referenced by tests/stories
+      // In this simulated scenario:
+      // - ProductionOnlyComponent.tsx: appears in both (truly unused)
+      // - TestReferencedComponent.tsx: only in production (excluded from productionPlusTests)
+      // - StoryReferencedComponent.tsx: only in production (excluded from productionPlusTests)
+      // - UnreferencedComponent.tsx: appears in both (truly unused)
+      // - unusedConfig.ts: appears in both (truly unused)
+      expect(productionPlusTestsResults).toHaveLength(3);
+
+      // Verify specific files that are only in production (test/story referenced)
+      const testReferenced = productionPlusTestsResults.find(
+        (f) => f.normalizedPath === "src/production/TestReferencedComponent.tsx"
+      );
+      expect(testReferenced).toBeUndefined();
+
+      const storyReferenced = productionPlusTestsResults.find(
+        (f) => f.normalizedPath === "src/production/StoryReferencedComponent.tsx"
+      );
+      expect(storyReferenced).toBeUndefined();
+
+      // Verify truly unused files appear in both
+      const productionOnly = productionPlusTestsResults.find(
+        (f) => f.normalizedPath === "src/production/ProductionOnlyComponent.tsx"
+      );
+      expect(productionOnly).toBeDefined();
+
+      const unreferenced = productionPlusTestsResults.find(
+        (f) => f.normalizedPath === "src/production/UnreferencedComponent.tsx"
+      );
+      expect(unreferenced).toBeDefined();
+
+      const config = productionPlusTestsResults.find(
+        (f) => f.normalizedPath === "src/production/config/unusedConfig.ts"
+      );
+      expect(config).toBeDefined();
+    });
+
+    test("proves test/story files never appear in processed report", () => {
+      const results = parseKnipReport(integrationTestFixture);
+
+      // Verify no .test. files appear in results
+      const testFiles = results.filter((f) => f.fileName.includes(".test."));
+      expect(testFiles).toHaveLength(0);
+
+      // Verify no .stories. files appear in results
+      const storyFiles = results.filter((f) => f.fileName.includes(".stories."));
+      expect(storyFiles).toHaveLength(0);
+
+      // Verify no .storybook directory files appear in results
+      const storybookFiles = results.filter((f) => f.normalizedPath.startsWith(".storybook"));
+      expect(storybookFiles).toHaveLength(0);
+
+      // Verify total count excludes all test/story files
+      // Original fixture has 9 issues:
+      // - 4 production .tsx files (accepted)
+      // - 1 .test.tsx file (rejected)
+      // - 1 .stories.tsx file (rejected)
+      // - 1 .storybook config (rejected)
+      // - 1 jest.config.js (rejected - wrong extension)
+      // - 1 config file (accepted)
+      // Expected: 5 accepted findings
+      expect(results).toHaveLength(5);
+    });
+
+    test("proves unrelated tooling/config files cannot affect the broader scan", () => {
+      const results = parseKnipReport(integrationTestFixture);
+
+      // Verify jest.config.js is not in results (wrong extension)
+      const jestConfig = results.find((f) => f.fileName === "jest.config.js");
+      expect(jestConfig).toBeUndefined();
+
+      // Verify .storybook config is not in results (wrong directory)
+      const storybookConfig = results.find((f) => f.normalizedPath === ".storybook/config/setup.ts");
+      expect(storybookConfig).toBeUndefined();
+
+      // Verify config files in src/ are still accepted if they meet criteria
+      const configFiles = results.filter((f) => f.normalizedPath.includes("config"));
+      expect(configFiles).toHaveLength(1);
+      expect(configFiles[0].normalizedPath).toBe("src/production/config/unusedConfig.ts");
+    });
+
+    test("asserts exact fixture results for production findings", () => {
+      const results = parseKnipReport(integrationTestFixture);
+
+      // Assert exact expected findings (sorted by normalizedPath)
+      const expectedFindings: Array<{
+        normalizedPath: string;
+        fileName: string;
+        issueType: string;
+      }> = [
+        {
+          normalizedPath: "src/production/config/unusedConfig.ts",
+          fileName: "unusedConfig.ts",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/ProductionOnlyComponent.tsx",
+          fileName: "ProductionOnlyComponent.tsx",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/StoryReferencedComponent.tsx",
+          fileName: "StoryReferencedComponent.tsx",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/TestReferencedComponent.tsx",
+          fileName: "TestReferencedComponent.tsx",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/UnreferencedComponent.tsx",
+          fileName: "UnreferencedComponent.tsx",
+          issueType: "files",
+        },
+      ];
+
+      expect(results).toHaveLength(expectedFindings.length);
+
+      expectedFindings.forEach((expected, index) => {
+        expect(results[index].normalizedPath).toBe(expected.normalizedPath);
+        expect(results[index].fileName).toBe(expected.fileName);
+        expect(results[index].issueType).toBe(expected.issueType);
+      });
+    });
+
+    test("asserts exact fixture results for productionPlusTests findings", () => {
+      const results = parseKnipReport(integrationTestFixtureProductionPlusTests);
+
+      // Assert exact expected findings (excludes test/story-referenced files, sorted by normalizedPath)
+      const expectedFindings: Array<{
+        normalizedPath: string;
+        fileName: string;
+        issueType: string;
+      }> = [
+        {
+          normalizedPath: "src/production/config/unusedConfig.ts",
+          fileName: "unusedConfig.ts",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/ProductionOnlyComponent.tsx",
+          fileName: "ProductionOnlyComponent.tsx",
+          issueType: "files",
+        },
+        {
+          normalizedPath: "src/production/UnreferencedComponent.tsx",
+          fileName: "UnreferencedComponent.tsx",
+          issueType: "files",
+        },
+      ];
+
+      expect(results).toHaveLength(expectedFindings.length);
+
+      expectedFindings.forEach((expected, index) => {
+        expect(results[index].normalizedPath).toBe(expected.normalizedPath);
+        expect(results[index].fileName).toBe(expected.fileName);
+        expect(results[index].issueType).toBe(expected.issueType);
+      });
     });
   });
 });

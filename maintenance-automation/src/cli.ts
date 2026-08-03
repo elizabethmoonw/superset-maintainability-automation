@@ -21,7 +21,7 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
-import { parseKnipReport, NormalizedFinding, KnipReport } from "./parseKnipReport";
+import { parseKnipReport, type NormalizedFinding, type KnipReport } from "./parseKnipReport";
 
 interface KnipExecutionError extends Error {
   stdout?: string;
@@ -50,7 +50,8 @@ class KnipExecutionError extends Error implements KnipExecutionError {
   }
 }
 
-export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, KnipReport, validateMode, type ScanMode, type ComparisonResult, compareFindings, type ScanDefinition, getScanDefinition, buildKnipCommand };
+export { KnipValidationError, KnipExecutionError, validateKnipReportStructure, validateMode, compareFindings, getScanDefinition, buildKnipCommand };
+export type { ScanMode, ComparisonResult, ScanDefinition, NormalizedFinding, KnipReport };
 
 type ScanMode = "production" | "productionPlusTests";
 
@@ -163,7 +164,7 @@ const PROCESSED_PRODUCTION_PLUS_TESTS_FILE = path.join(REPORTS_DIR, "processed-p
 const PRODUCTION_PLUS_TESTS_REPORT_FILE = path.join(REPORTS_DIR, "productionPlusTests-report.md");
 const PRODUCTION_PLUS_TESTS_METADATA_FILE = path.join(REPORTS_DIR, "productionPlusTests-metadata.json");
 
-function ensureReportsDirectory(): void {
+export function ensureReportsDirectory(): void {
   if (!fs.existsSync(REPORTS_DIR)) {
     fs.mkdirSync(REPORTS_DIR, { recursive: true });
   }
@@ -191,6 +192,21 @@ function validateKnipReportStructure(data: unknown): data is KnipReport {
   return true;
 }
 
+export function validateKnipExitCode(
+  exitCode: number,
+  stdout = "",
+  stderr = "",
+): void {
+  if (exitCode !== 0 && exitCode !== 1) {
+    throw new KnipExecutionError(
+      `Knip returned unexpected exit code ${exitCode}. Only exit codes 0 and 1 are accepted.`,
+      stdout,
+      stderr,
+      exitCode,
+    );
+  }
+}
+
 function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: string): string {
   console.log(`Capturing raw Knip output for ${scanMode} mode...`);
 
@@ -199,7 +215,7 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
 
   let stdout: string;
   let stderr: string;
-  let exitCode: number | undefined;
+  let exitCode = 0;
 
   try {
     stdout = execSync(
@@ -227,6 +243,9 @@ function captureRawKnipOutput(configFile: string, outputFile: string, scanMode: 
       );
     }
   }
+
+  // Only accept exit codes 0 (no issues) or 1 (issues found)
+  validateKnipExitCode(exitCode, stdout, stderr);
 
   // Validate the output is valid JSON
   let parsedData: unknown;
@@ -412,7 +431,7 @@ function displayStatistics(findings: NormalizedFinding[]): void {
   }
 }
 
-function runScan(configFile: string, rawFile: string, processedFile: string, reportFile: string, metadataFile: string, scanMode: string): NormalizedFinding[] {
+export function runScan(configFile: string, rawFile: string, processedFile: string, reportFile: string, metadataFile: string, scanMode: string): NormalizedFinding[] {
   console.log(`\n=== ${scanMode.charAt(0).toUpperCase() + scanMode.slice(1)} Scan Runner ===\n`);
 
   const rawContent = captureRawKnipOutput(configFile, rawFile, scanMode);

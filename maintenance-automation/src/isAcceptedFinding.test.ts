@@ -75,6 +75,30 @@ describe("isAcceptedFinding", () => {
       };
       expect(isAcceptedFinding(finding)).toBe(true);
     });
+
+    test("accepts production fixture files", () => {
+      const finding: Finding = {
+        ...baseFinding,
+        normalizedPath: "src/SqlLab/fixtures.ts",
+        fileExtension: "ts",
+        filePath: "src/SqlLab/fixtures.ts",
+        fileName: "fixtures.ts",
+        issueType: "files",
+      };
+      expect(isAcceptedFinding(finding)).toBe(true);
+    });
+
+    test("accepts production mock files", () => {
+      const finding: Finding = {
+        ...baseFinding,
+        normalizedPath: "src/components/mockMessageToasts.ts",
+        fileExtension: "ts",
+        filePath: "src/components/mockMessageToasts.ts",
+        fileName: "mockMessageToasts.ts",
+        issueType: "files",
+      };
+      expect(isAcceptedFinding(finding)).toBe(true);
+    });
   });
 
   describe("REJECTED cases - path does not start with src/", () => {
@@ -212,6 +236,7 @@ describe("isAcceptedFinding", () => {
       };
       expect(isAcceptedFinding(finding)).toBe(false);
     });
+
   });
 
   describe("REJECTED cases - issue type", () => {
@@ -436,6 +461,7 @@ describe("isAcceptedFinding", () => {
         };
         expect(isAcceptedFinding(finding)).toBe(false);
       });
+
     });
 
     describe("REJECTED - non-src paths from Knip findings", () => {
