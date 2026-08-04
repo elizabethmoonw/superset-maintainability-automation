@@ -86,9 +86,12 @@ export interface CandidateGroup {
 }
 
 export interface FindingInventory {
-  totalFindingCount: number;
-  totalFileCount: number;
-  findings: ActionableBatchFinding[];
+  sharedEvidenceFindingCount: number;
+  diagnosticTypeFindingCount: number;
+  actionableRuntimeCandidateCount: number;
+  actionableRuntimeCandidateFileCount: number;
+  diagnosticTypeFindings: ActionableBatchFinding[];
+  actionableRuntimeCandidates: ActionableBatchFinding[];
   candidateGroups: CandidateGroup[];
 }
 
@@ -102,7 +105,7 @@ export interface SelectedBatch {
 }
 
 export interface ActionableBatch {
-  schemaVersion: 2;
+  schemaVersion: 3;
   evidenceNotice: string;
   batchTargetSize: number;
   inventory: FindingInventory;
@@ -117,7 +120,8 @@ export interface ScanCount {
 export interface ScanCounts {
   production: ScanCount;
   productionPlusTests: ScanCount;
-  intersection: number;
+  sharedEvidenceFindingCount: number;
+  actionableRuntimeCandidateCount: number;
 }
 
 export interface RunStatus {
@@ -248,7 +252,7 @@ export function generateActionableBatch(
     .filter((key) => productionPlusTests.has(key))
     .sort(compareStrings);
 
-  const findings = sharedKeys.map((key) => {
+  const sharedEvidence = sharedKeys.map((key) => {
     const productionEvidence = production.get(key);
     const productionPlusTestsEvidence = productionPlusTests.get(key);
     if (
@@ -268,24 +272,33 @@ export function generateActionableBatch(
     };
   });
 
-  const candidateGroups = createCandidateGroups(findings);
+  const diagnosticTypeFindings = sharedEvidence.filter(
+    (finding) => finding.issueType === "types",
+  );
+  const actionableRuntimeCandidates = sharedEvidence.filter(
+    (finding) => finding.issueType !== "types",
+  );
+  const candidateGroups = createCandidateGroups(actionableRuntimeCandidates);
   const targetFindingCount =
     options.targetFindingCount ?? BATCH_TARGET_FINDINGS;
   const selectedBatch = selectBatch(
     candidateGroups,
-    findings,
+    actionableRuntimeCandidates,
     options.ledger ?? createEmptyBatchLedger(),
     targetFindingCount,
   );
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     evidenceNotice: EVIDENCE_NOTICE,
     batchTargetSize: targetFindingCount,
     inventory: {
-      totalFindingCount: findings.length,
-      totalFileCount: candidateGroups.length,
-      findings,
+      sharedEvidenceFindingCount: sharedEvidence.length,
+      diagnosticTypeFindingCount: diagnosticTypeFindings.length,
+      actionableRuntimeCandidateCount: actionableRuntimeCandidates.length,
+      actionableRuntimeCandidateFileCount: candidateGroups.length,
+      diagnosticTypeFindings,
+      actionableRuntimeCandidates,
       candidateGroups,
     },
     selectedBatch,
@@ -447,8 +460,10 @@ function escapeMarkdown(value: string): string {
 function renderFindings(batch: ActionableBatch): string {
   const selectedFindings = batch.selectedBatch?.findings ?? [];
   if (selectedFindings.length === 0) {
-    return batch.inventory.totalFindingCount === 0
-      ? "No findings were present in both processed reports.\n"
+    return batch.inventory.actionableRuntimeCandidateCount === 0
+      ? batch.inventory.sharedEvidenceFindingCount === 0
+        ? "No findings were present in both processed reports.\n"
+        : "No actionable runtime candidates were present; shared type findings remain diagnostic evidence only.\n"
       : "No eligible batch is available; all current candidates have an open pull request.\n";
   }
 
@@ -476,8 +491,9 @@ function renderStatus(status: RunStatus): string {
     `- Production by type: ${renderTypeCounts(status.scanCounts.production)}`,
     `- Production-plus-tests findings: ${status.scanCounts.productionPlusTests.total}`,
     `- Production-plus-tests by type: ${renderTypeCounts(status.scanCounts.productionPlusTests)}`,
-    `- Shared finding inventory: ${status.scanCounts.intersection}`,
-    `- Selected batch findings: ${status.batchSize}`,
+    `- Shared scanner evidence: ${status.scanCounts.sharedEvidenceFindingCount}`,
+    `- Actionable runtime candidates: ${status.scanCounts.actionableRuntimeCandidateCount}`,
+    `- Selected runtime candidates: ${status.batchSize}`,
     `- Report digest: \`${status.reportDigest}\``,
     `- Batch digest: \`${status.batchDigest}\``,
     `- Started: \`${status.timestamps.startedAt}\``,
@@ -497,7 +513,7 @@ function createRunStatus(
   const selectedFindingCount = batch.selectedBatch?.findingCount ?? 0;
   const state: MaintenanceRunState = batch.selectedBatch
     ? "awaiting-approval"
-    : batch.inventory.totalFindingCount === 0
+    : batch.inventory.actionableRuntimeCandidateCount === 0
       ? "no-action-needed"
       : "no-eligible-batch";
   return {
@@ -509,7 +525,9 @@ function createRunStatus(
     scanCounts: {
       production: countFindings(productionFindings),
       productionPlusTests: countFindings(productionPlusTestsFindings),
-      intersection: batch.inventory.totalFindingCount,
+      sharedEvidenceFindingCount: batch.inventory.sharedEvidenceFindingCount,
+      actionableRuntimeCandidateCount:
+        batch.inventory.actionableRuntimeCandidateCount,
     },
     batchSize: selectedFindingCount,
     state,

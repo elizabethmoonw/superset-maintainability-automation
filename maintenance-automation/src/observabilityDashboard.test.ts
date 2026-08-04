@@ -22,7 +22,7 @@ import { type ObservabilityHistory } from "./observabilityData";
 import { renderDashboard } from "./observabilityDashboard";
 
 const history: ObservabilityHistory = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: "2026-08-04T12:00:00Z",
   repository: "apache/superset",
   headCommitSha: "abcdef",
@@ -38,13 +38,34 @@ const history: ObservabilityHistory = {
       kind: "current",
       commitSha: "abcdef",
       committedAt: "2026-08-04T12:00:00Z",
-      sharedFindingCount: 12,
-      affectedFileCount: 7,
-      byIssueType: { enumMembers: 0, exports: 2, files: 10, types: 0 },
-      newAffectedFileCount: 7,
-      persistentAffectedFileCount: 0,
-      resolvedAffectedFileCount: 0,
-      affectedFilePaths: ["src/a.ts"],
+      analyzerSignalCount: 12,
+      analyzerPathCount: 7,
+      byIssueType: { enumMembers: 0, exports: 2, files: 8, types: 2 },
+      runtimeCandidateSignalCount: 10,
+      runtimeCandidatePathCount: 6,
+      diagnosticTypeSignalCount: 2,
+      diagnosticTypePathCount: 2,
+      newRuntimeCandidatePathCount: 6,
+      persistentRuntimeCandidatePathCount: 0,
+      noLongerFlaggedRuntimeCandidatePathCount: 0,
+      analyzerPaths: [
+        "src/a.ts",
+        "src/b.ts",
+        "src/c.ts",
+        "src/d.ts",
+        "src/e.ts",
+        "src/f.ts",
+        "src/type.ts",
+      ],
+      runtimeCandidatePaths: [
+        "src/a.ts",
+        "src/b.ts",
+        "src/c.ts",
+        "src/d.ts",
+        "src/e.ts",
+        "src/f.ts",
+      ],
+      diagnosticTypePaths: ["src/a.ts", "src/type.ts"],
       findingKeys: ["files\u0000src/a.ts\u0000"],
     },
   ],
@@ -57,12 +78,12 @@ const history: ObservabilityHistory = {
       beforeCommitSha: "before",
       afterCommitSha: "after",
       acceptedFilePaths: ["src/a.ts"],
-      acceptedFilesDetectedBefore: 1,
-      acceptedFilesRemainingAfter: 0,
-      beforeAffectedFileCount: 8,
-      afterAffectedFileCount: 7,
-      beforeSharedFindingCount: 13,
-      afterSharedFindingCount: 12,
+      acceptedRuntimeCandidatePathsDetectedBefore: 1,
+      acceptedRuntimeCandidatePathsRemainingAfter: 0,
+      beforeRuntimeCandidatePathCount: 8,
+      afterRuntimeCandidatePathCount: 7,
+      beforeAnalyzerSignalCount: 13,
+      afterAnalyzerSignalCount: 12,
     },
   ],
 };
@@ -93,8 +114,12 @@ test("renders source-backed metrics and escapes external labels", () => {
   expect(html).toContain("Automation PR acceptance");
   expect(html).toContain("50%");
   expect(html).toContain("1 merged / 2 finally decided automation PRs");
-  expect(html).toContain("Overlapping analyzer signals");
+  expect(html).toContain("Runtime review-candidate paths over time");
+  expect(html).toContain("Type diagnostics");
+  expect(html).toContain("All analyzer signals");
   expect(html).toContain("Detection evidence, not system performance");
+  expect(html).toContain("This is detection evidence only");
+  expect(html).not.toContain("cleanup backlog");
   expect(html).toContain("Accepted &lt;cleanup&gt;");
   expect(html).not.toContain("Accepted <cleanup>");
 });

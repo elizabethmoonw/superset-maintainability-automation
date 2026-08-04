@@ -54,7 +54,8 @@ const RUN_STATUS: RunStatus = {
       total: 1,
       byIssueType: { enumMembers: 0, exports: 1, files: 0, types: 0 },
     },
-    intersection: 1,
+    sharedEvidenceFindingCount: 1,
+    actionableRuntimeCandidateCount: 1,
   },
   batchSize: 1,
   state: "awaiting-approval",
@@ -82,13 +83,16 @@ const FINDING = {
 };
 
 const BATCH: ActionableBatch = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   evidenceNotice: EVIDENCE_NOTICE,
   batchTargetSize: 10,
   inventory: {
-    totalFindingCount: 1,
-    totalFileCount: 1,
-    findings: [
+    sharedEvidenceFindingCount: 1,
+    diagnosticTypeFindingCount: 0,
+    actionableRuntimeCandidateCount: 1,
+    actionableRuntimeCandidateFileCount: 1,
+    diagnosticTypeFindings: [],
+    actionableRuntimeCandidates: [
       {
         findingKey: "exports\0src/unused.ts\0unusedExport",
         issueType: "exports",

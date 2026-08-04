@@ -22,6 +22,7 @@ import {
   addSnapshotMovement,
   createSnapshot,
   intersectFindings,
+  validateObservabilityHistory,
 } from "./observabilityData";
 
 function finding(
@@ -61,43 +62,76 @@ test("intersects scans at finding identity grain", () => {
   ).toEqual([unusedExport, wholeFile]);
 });
 
-test("counts one affected path even when it has multiple findings", () => {
+test("separates runtime review candidates from type diagnostics", () => {
   const findings = [
     finding("src/a.ts"),
     finding("src/a.ts", "exports", "unused"),
     finding("src/b.ts", "types", "OldType"),
+    finding("src/a.ts", "types", "LocalType"),
   ];
 
   const snapshot = createSnapshot(identity, findings, findings);
 
-  expect(snapshot.affectedFileCount).toBe(2);
-  expect(snapshot.sharedFindingCount).toBe(3);
+  expect(snapshot.analyzerSignalCount).toBe(4);
+  expect(snapshot.analyzerPathCount).toBe(2);
+  expect(snapshot.runtimeCandidateSignalCount).toBe(2);
+  expect(snapshot.runtimeCandidatePathCount).toBe(1);
+  expect(snapshot.runtimeCandidatePaths).toEqual(["src/a.ts"]);
+  expect(snapshot.diagnosticTypeSignalCount).toBe(2);
+  expect(snapshot.diagnosticTypePathCount).toBe(2);
+  expect(snapshot.diagnosticTypePaths).toEqual(["src/a.ts", "src/b.ts"]);
   expect(snapshot.byIssueType).toEqual({
     enumMembers: 0,
     exports: 1,
     files: 1,
-    types: 1,
+    types: 2,
   });
 });
 
-test("derives new, persistent, and resolved files between snapshots", () => {
+test("derives movement from runtime candidate paths only", () => {
   const first = createSnapshot(
     identity,
-    [finding("src/a.ts"), finding("src/b.ts")],
-    [finding("src/a.ts"), finding("src/b.ts")],
+    [
+      finding("src/a.ts"),
+      finding("src/b.ts"),
+      finding("src/type-a.ts", "types", "TypeA"),
+    ],
+    [
+      finding("src/a.ts"),
+      finding("src/b.ts"),
+      finding("src/type-a.ts", "types", "TypeA"),
+    ],
   );
   const second = createSnapshot(
     { ...identity, snapshotId: "current", kind: "current" },
-    [finding("src/b.ts"), finding("src/c.ts")],
-    [finding("src/b.ts"), finding("src/c.ts")],
+    [
+      finding("src/b.ts"),
+      finding("src/c.ts"),
+      finding("src/type-b.ts", "types", "TypeB"),
+    ],
+    [
+      finding("src/b.ts"),
+      finding("src/c.ts"),
+      finding("src/type-b.ts", "types", "TypeB"),
+    ],
   );
 
   const movement = addSnapshotMovement([first, second]);
 
-  expect(movement[0].newAffectedFileCount).toBe(2);
+  expect(movement[0].newRuntimeCandidatePathCount).toBe(2);
   expect(movement[1]).toMatchObject({
-    newAffectedFileCount: 1,
-    persistentAffectedFileCount: 1,
-    resolvedAffectedFileCount: 1,
+    newRuntimeCandidatePathCount: 1,
+    persistentRuntimeCandidatePathCount: 1,
+    noLongerFlaggedRuntimeCandidatePathCount: 1,
   });
+});
+
+test("rejects observability history from the ambiguous schema", () => {
+  expect(() =>
+    validateObservabilityHistory({
+      schemaVersion: 1,
+      snapshots: [],
+      benchmarks: [],
+    }),
+  ).toThrow("Invalid observability history");
 });

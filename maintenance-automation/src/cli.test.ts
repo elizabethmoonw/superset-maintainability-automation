@@ -24,6 +24,7 @@ import {
   validateKnipExitCode,
   validateMode,
   getScanDefinition,
+  buildKnipArguments,
   buildKnipCommand,
   type KnipReport,
   type ScanDefinition,
@@ -119,18 +120,50 @@ test("getScanDefinition: returns different output paths for each mode", () => {
   );
 });
 
-test("buildKnipCommand: includes --production flag for production mode", () => {
+test("buildKnipCommand: uses --production only for production mode", () => {
   const scanDef = getScanDefinition("production");
   const command = buildKnipCommand(scanDef);
 
   expect(command).toContain("--production");
+  expect(
+    buildKnipCommand(getScanDefinition("productionPlusTests")),
+  ).not.toContain("--production");
 });
 
-test("buildKnipCommand: includes --production flag for productionPlusTests mode", () => {
-  const scanDef = getScanDefinition("productionPlusTests");
-  const command = buildKnipCommand(scanDef);
+test("buildKnipArguments: keeps shared flags identical across scan modes", () => {
+  const productionArguments = buildKnipArguments(
+    "production",
+    "frontend",
+    "production.json",
+  );
+  const productionPlusTestsArguments = buildKnipArguments(
+    "productionPlusTests",
+    "frontend",
+    "all.json",
+  );
 
-  expect(command).toContain("--production");
+  expect(productionArguments).toContain("--production");
+  expect(productionPlusTestsArguments).not.toContain("--production");
+  expect(productionArguments).toEqual(
+    expect.arrayContaining([
+      "--directory",
+      "frontend",
+      "--include",
+      "files,exports,types,enumMembers",
+      "--reporter",
+      "json",
+    ]),
+  );
+  expect(productionPlusTestsArguments).toEqual(
+    expect.arrayContaining([
+      "--directory",
+      "frontend",
+      "--include",
+      "files,exports,types,enumMembers",
+      "--reporter",
+      "json",
+    ]),
+  );
 });
 
 test("buildKnipCommand: includes correct config file for production mode", () => {
@@ -463,18 +496,6 @@ test("production code selection logic: production config uses only source entry 
 test("production code selection logic: productionPlusTests config includes test entry points", () => {
   const scanDef = getScanDefinition("productionPlusTests");
   expect(scanDef.configFile).toBe("knip-production-plus-tests.json");
-});
-
-test("production code selection logic: both modes use --production flag to select production code", () => {
-  const productionDef = getScanDefinition("production");
-  const productionPlusTestsDef = getScanDefinition("productionPlusTests");
-
-  const productionCommand = buildKnipCommand(productionDef);
-  const productionPlusTestsCommand = buildKnipCommand(productionPlusTestsDef);
-
-  // Both should use --production flag
-  expect(productionCommand).toContain("--production");
-  expect(productionPlusTestsCommand).toContain("--production");
 });
 
 test("production code selection logic: both modes include same issue types", () => {

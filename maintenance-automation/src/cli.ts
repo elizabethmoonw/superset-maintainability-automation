@@ -66,6 +66,7 @@ export {
   validateMode,
   compareFindings,
   getScanDefinition,
+  buildKnipArguments,
   buildKnipCommand,
 };
 export type {
@@ -132,7 +133,33 @@ function getScanDefinition(mode: ScanMode): ScanDefinition {
 }
 
 function buildKnipCommand(scanDefinition: ScanDefinition): string {
-  return `knip --directory ../superset-frontend --config ../maintenance-automation/${scanDefinition.configFile} --production --include files,exports,types,enumMembers --reporter json`;
+  return [
+    "knip",
+    ...buildKnipArguments(
+      scanDefinition.modeName,
+      "../superset-frontend",
+      `../maintenance-automation/${scanDefinition.configFile}`,
+    ),
+  ].join(" ");
+}
+
+function buildKnipArguments(
+  mode: ScanMode,
+  directory: string,
+  configFile: string,
+): string[] {
+  const scanModeArguments = mode === "production" ? ["--production"] : [];
+  return [
+    "--directory",
+    directory,
+    "--config",
+    configFile,
+    ...scanModeArguments,
+    "--include",
+    "files,exports,types,enumMembers",
+    "--reporter",
+    "json",
+  ];
 }
 
 function validateMode(mode: string | undefined): ScanMode {
@@ -606,7 +633,11 @@ function main(): void {
     console.log(
       `=== ${validatedMode.charAt(0).toUpperCase() + validatedMode.slice(1)} Scan Runner ===`,
     );
-    console.log(`Running ${validatedMode} scan with --production flag\n`);
+    console.log(
+      validatedMode === "production"
+        ? "Running production-only scan with --production flag\n"
+        : "Running scan with configured test/spec/story references\n",
+    );
 
     ensureReportsDirectory();
 

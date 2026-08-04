@@ -137,7 +137,7 @@ function pullRequestOutcomes(
 
 function lineChart(history: ObservabilityHistory): string {
   const values = history.snapshots.map(
-    ({ affectedFileCount }) => affectedFileCount,
+    ({ runtimeCandidatePathCount }) => runtimeCandidatePathCount,
   );
   const width = 960;
   const height = 320;
@@ -163,8 +163,8 @@ function lineChart(history: ObservabilityHistory): string {
     .map((value, index) => `${x(index)},${y(value)}`)
     .join(" ");
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="trend-title trend-desc">
-    <title id="trend-title">Affected files by monthly snapshot</title>
-    <desc id="trend-desc">Line chart of distinct paths with at least one finding shared by both scans.</desc>
+    <title id="trend-title">Runtime review-candidate paths by monthly snapshot</title>
+    <desc id="trend-desc">Line chart of distinct paths with at least one non-type analyzer signal shared by both scans.</desc>
     ${ticks
       .map(
         (
@@ -177,7 +177,7 @@ function lineChart(history: ObservabilityHistory): string {
     ${history.snapshots
       .map(
         (snapshot, index) => `<g>
-          <circle cx="${x(index)}" cy="${y(snapshot.affectedFileCount)}" r="6" fill="white" stroke="${COLORS.blue}" stroke-width="3"><title>${escapeHtml(snapshot.period)}: ${snapshot.affectedFileCount} affected files</title></circle>
+          <circle cx="${x(index)}" cy="${y(snapshot.runtimeCandidatePathCount)}" r="6" fill="white" stroke="${COLORS.blue}" stroke-width="3"><title>${escapeHtml(snapshot.period)}: ${snapshot.runtimeCandidatePathCount} runtime review-candidate paths</title></circle>
           <text x="${x(index)}" y="${height - 28}" text-anchor="middle">${escapeHtml(snapshot.kind === "current" ? `${snapshot.period} current` : snapshot.period)}</text>
         </g>`,
       )
@@ -204,8 +204,8 @@ function pullRequestChart(outcomes: readonly PullRequestOutcome[]): string {
     return `<div class="empty-state">No automation PRs recorded yet. The chart will populate after the workflow opens its first draft PR.</div>`;
   }
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="pr-title pr-desc">
-    <title id="pr-title">Cleanup pull request outcomes by month</title>
-    <desc id="pr-desc">Stacked bars show merged, closed without merge, and open cleanup pull requests.</desc>
+    <title id="pr-title">Automation pull request outcomes by month</title>
+    <desc id="pr-desc">Stacked bars show merged, closed without merge, and open pull requests created by the workflow.</desc>
     ${Array.from(
       { length: maximum + 1 },
       (
@@ -280,22 +280,24 @@ export function renderDashboard(
     decided === 0 ? "N/A" : `${Math.round((merged / decided) * 100)}%`;
   const benchmark = history.benchmarks[0];
   const baseline = history.snapshots[0];
-  const affectedFileChange =
-    current.affectedFileCount - baseline.affectedFileCount;
-  const affectedFileChangePercent =
-    baseline.affectedFileCount === 0
+  const runtimeCandidatePathChange =
+    current.runtimeCandidatePathCount - baseline.runtimeCandidatePathCount;
+  const runtimeCandidatePathChangePercent =
+    baseline.runtimeCandidatePathCount === 0
       ? undefined
-      : (affectedFileChange / baseline.affectedFileCount) * 100;
-  const signedAffectedFileChange = `${affectedFileChange >= 0 ? "+" : ""}${affectedFileChange}`;
+      : (runtimeCandidatePathChange / baseline.runtimeCandidatePathCount) * 100;
+  const signedRuntimeCandidatePathChange = `${runtimeCandidatePathChange >= 0 ? "+" : ""}${runtimeCandidatePathChange}`;
   const repositoryUrl = `https://github.com/${history.repository}`;
   const rows = history.snapshots
     .map(
       (snapshot, index) => `<tr>
         <td>${escapeHtml(snapshot.kind === "current" ? `${snapshot.period} (current)` : snapshot.period)}</td>
-        <td>${snapshot.affectedFileCount}</td>
-        <td>${snapshot.sharedFindingCount}</td>
-        <td>${index === 0 ? "Baseline" : snapshot.newAffectedFileCount}</td>
-        <td>${index === 0 ? "—" : snapshot.resolvedAffectedFileCount}</td>
+        <td>${snapshot.runtimeCandidatePathCount}</td>
+        <td>${snapshot.runtimeCandidateSignalCount}</td>
+        <td>${snapshot.diagnosticTypeSignalCount}</td>
+        <td>${snapshot.analyzerSignalCount}</td>
+        <td>${index === 0 ? "Baseline" : snapshot.newRuntimeCandidatePathCount}</td>
+        <td>${index === 0 ? "—" : snapshot.noLongerFlaggedRuntimeCandidatePathCount}</td>
         <td><a href="${repositoryUrl}/commit/${escapeHtml(snapshot.commitSha)}">${escapeHtml(shortSha(snapshot.commitSha))}</a></td>
       </tr>`,
     )
@@ -365,19 +367,19 @@ export function renderDashboard(
   <header>
     <div class="eyebrow">Proof of concept · monthly workflow</div>
     <h1>Maintenance automation observability</h1>
-    <p class="subtitle">Does the scanner identify a meaningful cleanup backlog, and does the automation turn reviewable batches into accepted pull requests?</p>
+    <p class="subtitle">How does the scanner's runtime review surface change, and does the workflow turn reviewable batches into accepted pull requests?</p>
   </header>
   <section class="metrics" aria-label="Current metrics">
-    ${renderMetric("Affected files", current.affectedFileCount.toLocaleString(), "Distinct file paths in the current shared-finding inventory")}
-    ${renderMetric("Net backlog change", `${signedAffectedFileChange} files`, `${affectedFileChangePercent === undefined ? "No percentage baseline" : `${Math.abs(affectedFileChangePercent).toFixed(1)}% ${affectedFileChange >= 0 ? "increase" : "decrease"}`} since ${baseline.period}`)}
+    ${renderMetric("Runtime review paths", current.runtimeCandidatePathCount.toLocaleString(), `${current.runtimeCandidateSignalCount.toLocaleString()} non-type detector outputs across distinct paths`)}
+    ${renderMetric("Review-surface change", `${signedRuntimeCandidatePathChange} paths`, `${runtimeCandidatePathChangePercent === undefined ? "No percentage baseline" : `${Math.abs(runtimeCandidatePathChangePercent).toFixed(1)}% ${runtimeCandidatePathChange >= 0 ? "increase" : "decrease"}`} since ${baseline.period}`)}
     ${renderMetric("Automation PR acceptance", acceptance, `${merged} merged / ${decided} finally decided automation PRs`)}
     ${renderMetric("Open automation PRs", open.toString(), `${rejectedBatches} approval-rejected batch${rejectedBatches === 1 ? "" : "es"} tracked separately`)}
   </section>
 
   <section class="panel">
-    <div class="panel-heading"><div><h2>Affected files over time</h2><p>Monthly first-parent snapshots use the same pinned scanner and configs. Lower is directionally better, but product development may add new candidates.</p></div></div>
+    <div class="panel-heading"><div><h2>Runtime review-candidate paths over time</h2><p>Monthly first-parent snapshots count distinct paths with non-type signals found by both scans. These are review candidates, not validated dead code; movement may reflect code changes, analyzer behavior, or configuration.</p></div></div>
     ${lineChart(history)}
-    <div class="table-wrap"><table><thead><tr><th>Snapshot</th><th>Affected files</th><th>Overlapping analyzer signals</th><th>New files</th><th>Resolved files</th><th>Commit</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Snapshot</th><th>Runtime review paths</th><th>Runtime signals</th><th>Type diagnostics</th><th>All analyzer signals</th><th>Newly flagged paths</th><th>No longer flagged</th><th>Commit</th></tr></thead><tbody>${rows}</tbody></table></div>
   </section>
 
   <section class="panel">
@@ -391,17 +393,19 @@ export function renderDashboard(
     benchmark === undefined
       ? ""
       : `<section class="panel benchmark">
-    <div><div class="eyebrow">Scanner recall backtest</div><div class="benchmark-number">${benchmark.acceptedFilesDetectedBefore}<span> / ${benchmark.acceptedFilePaths.length}</span></div><p>files a human independently chose to delete were present in the scanner inventory immediately before the cleanup.</p></div>
-    <div><h2>Detection evidence, not system performance</h2><p><a href="${escapeHtml(benchmark.pullRequestUrl)}">${escapeHtml(benchmark.label)}</a> tests whether the scanner can surface historically useful candidates. Because a human selected and implemented this cleanup outside the automation, it is excluded from PR acceptance and automation outcomes.</p><div class="callout">After the merge, ${benchmark.acceptedFilesRemainingAfter} of those accepted files remained in the inventory. Affected files moved from ${benchmark.beforeAffectedFileCount} to ${benchmark.afterAffectedFileCount}, matching the 9 deleted files.</div></div>
+    <div><div class="eyebrow">Historical detection check</div><div class="benchmark-number">${benchmark.acceptedRuntimeCandidatePathsDetectedBefore}<span> / ${benchmark.acceptedFilePaths.length}</span></div><p>paths a human independently chose to delete were present in the runtime review-candidate inventory before that change.</p></div>
+    <div><h2>Detection evidence, not system performance</h2><p><a href="${escapeHtml(benchmark.pullRequestUrl)}">${escapeHtml(benchmark.label)}</a> tests whether the scanner can surface historically useful candidates. Because a human selected and implemented this change outside the automation, it is excluded from PR acceptance and automation outcomes.</p><div class="callout">After the merge, ${benchmark.acceptedRuntimeCandidatePathsRemainingAfter} of those independently selected paths remained flagged. The total runtime review surface moved from ${benchmark.beforeRuntimeCandidatePathCount} to ${benchmark.afterRuntimeCandidatePathCount} paths. This is detection evidence only; it does not measure automation precision or impact.</div></div>
   </section>`
   }
 
   <section class="panel">
     <h2>Semantic definitions and limits</h2>
     <dl>
-      <dt>Affected file</dt><dd>One distinct repository path containing at least one analyzer signal present in both the production-only and production-plus-tests scans. A file counts once even if it has multiple unused symbols or signal types.</dd>
-      <dt>Analyzer signal</dt><dd>One raw detector output keyed by issue category + file path + symbol. Signals overlap: a file reported as unused may also contain unused exports, types, or enum members. Therefore this count is diagnostic only and must not be interpreted as a number of cleanup tasks, files, or PRs.</dd>
-      <dt>Batch</dt><dd>A file-coherent review unit targeting at most 10 analyzer signals. A file is never split; one oversized file may therefore exceed 10.</dd>
+      <dt>Runtime review path</dt><dd>One distinct repository path with at least one file, export, or enum-member signal present in both scans. It is a screening unit, not proof that the path or implementation is dead. A path counts once even when several detectors report it.</dd>
+      <dt>Runtime candidate signal</dt><dd>One non-type detector output present in both scans. Export signals can describe either an unused implementation or a live implementation with a redundant export, so source-level validation is still required.</dd>
+      <dt>Type diagnostic</dt><dd>A shared unused-type detector output, reported separately because declaration emit and local type usage can make it intentional. Type diagnostics are excluded from runtime review candidates and remediation batches.</dd>
+      <dt>Analyzer signal</dt><dd>One raw detector output keyed by issue category + file path + symbol. Detector outputs can overlap within one path, so the all-signal total is diagnostic only and is not a count of cleanup tasks, files, or PRs.</dd>
+      <dt>Batch</dt><dd>A file-coherent review unit of runtime candidates. A path is not split across batches, and every candidate still requires validation before remediation.</dd>
       <dt>Acceptance rate</dt><dd>Merged workflow-created PRs divided by merged plus closed-unmerged workflow-created PRs. The human-selected historical cleanup is excluded. Drafts still open, approval-rejected batches, deferred batches, and failed automation runs are also excluded.</dd>
       <dt>Backfill method</dt><dd>A consistent-ruler proof of concept: each historical worktree is scanned with Knip ${escapeHtml(history.scanner.knipVersion)}, the current scanner configs, and the current installed dependencies. It is comparable across snapshots but does not recreate each month’s historical dependency environment.</dd>
     </dl>

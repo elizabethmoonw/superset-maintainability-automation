@@ -20,7 +20,7 @@
 import { createFindingKey, type IssueType } from "./generateActionableBatch";
 import { type NormalizedFinding } from "./parseKnipReport";
 
-export const OBSERVABILITY_SCHEMA_VERSION = 1;
+export const OBSERVABILITY_SCHEMA_VERSION = 2;
 
 export interface IssueTypeCounts {
   enumMembers: number;
@@ -35,13 +35,19 @@ export interface FindingSnapshot {
   kind: "month-end" | "current";
   commitSha: string;
   committedAt: string;
-  sharedFindingCount: number;
-  affectedFileCount: number;
+  analyzerSignalCount: number;
+  analyzerPathCount: number;
   byIssueType: IssueTypeCounts;
-  newAffectedFileCount: number;
-  persistentAffectedFileCount: number;
-  resolvedAffectedFileCount: number;
-  affectedFilePaths: string[];
+  runtimeCandidateSignalCount: number;
+  runtimeCandidatePathCount: number;
+  diagnosticTypeSignalCount: number;
+  diagnosticTypePathCount: number;
+  newRuntimeCandidatePathCount: number;
+  persistentRuntimeCandidatePathCount: number;
+  noLongerFlaggedRuntimeCandidatePathCount: number;
+  analyzerPaths: string[];
+  runtimeCandidatePaths: string[];
+  diagnosticTypePaths: string[];
   findingKeys: string[];
 }
 
@@ -53,12 +59,12 @@ export interface HistoricalBenchmark {
   beforeCommitSha: string;
   afterCommitSha: string;
   acceptedFilePaths: string[];
-  acceptedFilesDetectedBefore: number;
-  acceptedFilesRemainingAfter: number;
-  beforeAffectedFileCount: number;
-  afterAffectedFileCount: number;
-  beforeSharedFindingCount: number;
-  afterSharedFindingCount: number;
+  acceptedRuntimeCandidatePathsDetectedBefore: number;
+  acceptedRuntimeCandidatePathsRemainingAfter: number;
+  beforeRuntimeCandidatePathCount: number;
+  afterRuntimeCandidatePathCount: number;
+  beforeAnalyzerSignalCount: number;
+  afterAnalyzerSignalCount: number;
 }
 
 export interface ScannerIdentity {
@@ -68,7 +74,7 @@ export interface ScannerIdentity {
 }
 
 export interface ObservabilityHistory {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   repository: string;
   headCommitSha: string;
@@ -91,6 +97,11 @@ const ISSUE_TYPES: readonly IssueType[] = [
   "files",
   "types",
 ];
+const RUNTIME_CANDIDATE_ISSUE_TYPES = new Set<IssueType>([
+  "enumMembers",
+  "exports",
+  "files",
+]);
 
 function emptyIssueTypeCounts(): IssueTypeCounts {
   return { enumMembers: 0, exports: 0, files: 0, types: 0 };
@@ -134,18 +145,36 @@ export function createSnapshot(
     }),
     emptyIssueTypeCounts(),
   );
-  const affectedFilePaths = [
+  const analyzerPaths = [
     ...new Set(sharedFindings.map(({ normalizedPath }) => normalizedPath)),
+  ].sort();
+  const runtimeCandidates = sharedFindings.filter(({ issueType }) =>
+    RUNTIME_CANDIDATE_ISSUE_TYPES.has(issueType),
+  );
+  const typeDiagnostics = sharedFindings.filter(
+    ({ issueType }) => issueType === "types",
+  );
+  const runtimeCandidatePaths = [
+    ...new Set(runtimeCandidates.map(({ normalizedPath }) => normalizedPath)),
+  ].sort();
+  const diagnosticTypePaths = [
+    ...new Set(typeDiagnostics.map(({ normalizedPath }) => normalizedPath)),
   ].sort();
   return {
     ...identity,
-    sharedFindingCount: sharedFindings.length,
-    affectedFileCount: affectedFilePaths.length,
+    analyzerSignalCount: sharedFindings.length,
+    analyzerPathCount: analyzerPaths.length,
     byIssueType,
-    newAffectedFileCount: 0,
-    persistentAffectedFileCount: 0,
-    resolvedAffectedFileCount: 0,
-    affectedFilePaths,
+    runtimeCandidateSignalCount: runtimeCandidates.length,
+    runtimeCandidatePathCount: runtimeCandidatePaths.length,
+    diagnosticTypeSignalCount: typeDiagnostics.length,
+    diagnosticTypePathCount: diagnosticTypePaths.length,
+    newRuntimeCandidatePathCount: 0,
+    persistentRuntimeCandidatePathCount: 0,
+    noLongerFlaggedRuntimeCandidatePathCount: 0,
+    analyzerPaths,
+    runtimeCandidatePaths,
+    diagnosticTypePaths,
     findingKeys: sharedFindings.map(createFindingKey).sort(),
   };
 }
@@ -157,22 +186,24 @@ export function addSnapshotMovement(
     if (index === 0) {
       return {
         ...snapshot,
-        newAffectedFileCount: snapshot.affectedFileCount,
+        newRuntimeCandidatePathCount: snapshot.runtimeCandidatePathCount,
       };
     }
-    const previousPaths = new Set(snapshots[index - 1].affectedFilePaths);
-    const currentPaths = new Set(snapshot.affectedFilePaths);
+    const previousPaths = new Set(snapshots[index - 1].runtimeCandidatePaths);
+    const currentPaths = new Set(snapshot.runtimeCandidatePaths);
     return {
       ...snapshot,
-      newAffectedFileCount: snapshot.affectedFilePaths.filter(
+      newRuntimeCandidatePathCount: snapshot.runtimeCandidatePaths.filter(
         (filePath) => !previousPaths.has(filePath),
       ).length,
-      persistentAffectedFileCount: snapshot.affectedFilePaths.filter(
-        (filePath) => previousPaths.has(filePath),
-      ).length,
-      resolvedAffectedFileCount: snapshots[index - 1].affectedFilePaths.filter(
-        (filePath) => !currentPaths.has(filePath),
-      ).length,
+      persistentRuntimeCandidatePathCount:
+        snapshot.runtimeCandidatePaths.filter((filePath) =>
+          previousPaths.has(filePath),
+        ).length,
+      noLongerFlaggedRuntimeCandidatePathCount: snapshots[
+        index - 1
+      ].runtimeCandidatePaths.filter((filePath) => !currentPaths.has(filePath))
+        .length,
     };
   });
 }

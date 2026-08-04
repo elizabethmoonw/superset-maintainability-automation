@@ -74,7 +74,7 @@ test("finding identity uses issue type, normalized path, and an empty file symbo
   );
 });
 
-test("batch selects only findings present in both reports and preserves both evidence records", () => {
+test("mixed shared evidence selects runtime candidates and preserves type diagnostics", () => {
   const sharedProduction = createFinding(
     "exports",
     "src/shared.ts",
@@ -87,16 +87,44 @@ test("batch selects only findings present in both reports and preserves both evi
     "sharedValue",
     12,
   );
+  const sharedType = createFinding(
+    "types",
+    "src/shared.ts",
+    "DeclarationOnlyType",
+  );
   const batch = generateActionableBatch(
-    [sharedProduction, createFinding("files", "src/productionOnly.ts")],
+    [
+      sharedProduction,
+      sharedType,
+      createFinding("files", "src/productionOnly.ts"),
+    ],
     [
       sharedProductionPlusTests,
+      sharedType,
       createFinding("types", "src/testScopeOnly.ts", "ScopeType"),
     ],
   );
 
-  expect(batch.inventory.totalFindingCount).toBe(1);
-  expect(batch.inventory.totalFileCount).toBe(1);
+  expect(batch.inventory).toEqual(
+    expect.objectContaining({
+      sharedEvidenceFindingCount: 2,
+      diagnosticTypeFindingCount: 1,
+      actionableRuntimeCandidateCount: 1,
+      actionableRuntimeCandidateFileCount: 1,
+    }),
+  );
+  expect(batch.inventory.diagnosticTypeFindings).toEqual([
+    expect.objectContaining({
+      issueType: "types",
+      symbolName: "DeclarationOnlyType",
+    }),
+  ]);
+  expect(batch.inventory.actionableRuntimeCandidates).toEqual([
+    expect.objectContaining({
+      issueType: "exports",
+      symbolName: "sharedValue",
+    }),
+  ]);
   expect(batch.selectedBatch?.findings).toEqual([
     expect.objectContaining({
       normalizedPath: "src/shared.ts",
@@ -105,6 +133,9 @@ test("batch selects only findings present in both reports and preserves both evi
       productionPlusTestsEvidence: sharedProductionPlusTests,
     }),
   ]);
+  expect(batch.selectedBatch?.findings).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ issueType: "types" })]),
+  );
   expect(batch.evidenceNotice).toBe(EVIDENCE_NOTICE);
 });
 
@@ -122,8 +153,8 @@ test("batch preserves the inventory while selecting a deterministic batch", () =
     [...findings].reverse(),
   );
 
-  expect(forward.inventory.totalFindingCount).toBe(12);
-  expect(forward.inventory.findings).toHaveLength(12);
+  expect(forward.inventory.actionableRuntimeCandidateCount).toBe(12);
+  expect(forward.inventory.actionableRuntimeCandidates).toHaveLength(12);
   expect(forward.selectedBatch?.findings).toHaveLength(BATCH_TARGET_FINDINGS);
   expect(serializeActionableBatch(forward)).toBe(
     serializeActionableBatch(reversed),
@@ -137,7 +168,7 @@ test("batch preserves the inventory while selecting a deterministic batch", () =
   );
 });
 
-test("duplicate identities use numeric line and column order independent of input order", () => {
+test("duplicate type diagnostics use numeric line and column order independent of input order", () => {
   const earlierEvidence = createFinding(
     "types",
     "src/types.ts",
@@ -174,10 +205,59 @@ test("duplicate identities use numeric line and column order independent of inpu
     [plusTestsEvidence],
   );
 
-  expect(first.selectedBatch?.findings).toHaveLength(1);
-  expect(first.selectedBatch?.findings[0].productionEvidence.line).toBe(4);
-  expect(first.selectedBatch?.findings[0].productionEvidence.col).toBe(2);
+  expect(first.selectedBatch).toBeNull();
+  expect(first.inventory.diagnosticTypeFindings).toHaveLength(1);
+  expect(
+    first.inventory.diagnosticTypeFindings[0].productionEvidence.line,
+  ).toBe(4);
+  expect(first.inventory.diagnosticTypeFindings[0].productionEvidence.col).toBe(
+    2,
+  );
   expect(first).toEqual(second);
+});
+
+test("type-only shared evidence needs no action and remains visible diagnostically", () => {
+  const sharedType = createFinding(
+    "types",
+    "src/declaration.ts",
+    "PublicDeclaration",
+  );
+  const artifacts = generateRunArtifacts(
+    [sharedType],
+    [sharedType],
+    "production report",
+    "production plus tests report",
+    RUN_CONTEXT,
+  );
+
+  expect(artifacts.batch.inventory).toEqual(
+    expect.objectContaining({
+      sharedEvidenceFindingCount: 1,
+      diagnosticTypeFindingCount: 1,
+      actionableRuntimeCandidateCount: 0,
+      actionableRuntimeCandidateFileCount: 0,
+      actionableRuntimeCandidates: [],
+      candidateGroups: [],
+    }),
+  );
+  expect(artifacts.batch.inventory.diagnosticTypeFindings).toEqual([
+    expect.objectContaining({
+      issueType: "types",
+      symbolName: "PublicDeclaration",
+    }),
+  ]);
+  expect(artifacts.batch.selectedBatch).toBeNull();
+  expect(artifacts.status.state).toBe("no-action-needed");
+  expect(artifacts.status.batchSize).toBe(0);
+  expect(artifacts.status.scanCounts).toEqual(
+    expect.objectContaining({
+      sharedEvidenceFindingCount: 1,
+      actionableRuntimeCandidateCount: 0,
+    }),
+  );
+  expect(artifacts.summaryMarkdown).toContain(
+    "No actionable runtime candidates were present",
+  );
 });
 
 test("empty intersection produces no-action-needed status and no evidence rows", () => {
@@ -235,7 +315,8 @@ test("run artifacts contain concise status metadata and a content-addressed batc
       total: 1,
       byIssueType: { enumMembers: 0, exports: 0, files: 1, types: 0 },
     },
-    intersection: 1,
+    sharedEvidenceFindingCount: 1,
+    actionableRuntimeCandidateCount: 1,
   });
   expect(artifacts.summaryMarkdown).toContain(EVIDENCE_NOTICE);
   expect(artifacts.issueMarkdown).toContain(
@@ -269,7 +350,7 @@ test("non-empty inventory blocked by open pull requests has no-eligible-batch st
     },
   );
 
-  expect(artifacts.batch.inventory.totalFindingCount).toBe(1);
+  expect(artifacts.batch.inventory.actionableRuntimeCandidateCount).toBe(1);
   expect(artifacts.batch.selectedBatch).toBeNull();
   expect(artifacts.status.state).toBe("no-eligible-batch");
   expect(artifacts.status.batchSize).toBe(0);

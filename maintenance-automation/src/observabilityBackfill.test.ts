@@ -19,6 +19,7 @@
 
 import * as path from "path";
 import {
+  buildHistoricalKnipArguments,
   completedMonthBoundaries,
   parseBackfillOptions,
 } from "./observabilityBackfill";
@@ -46,5 +47,25 @@ test("parses reproducible backfill options and guards scan volume", () => {
   });
   expect(() => parseBackfillOptions(["--months", "25"], root)).toThrow(
     "cannot exceed 24",
+  );
+});
+
+test("backfill uses production filtering only for the production scan", () => {
+  const productionArguments = buildHistoricalKnipArguments(
+    "/automation",
+    "/frontend",
+    "production",
+  );
+  const productionPlusTestsArguments = buildHistoricalKnipArguments(
+    "/automation",
+    "/frontend",
+    "productionPlusTests",
+  );
+
+  expect(productionArguments).toContain("--production");
+  expect(productionPlusTestsArguments).not.toContain("--production");
+  expect(productionArguments).toContain("/automation/knip.json");
+  expect(productionPlusTestsArguments).toContain(
+    "/automation/knip-production-plus-tests.json",
   );
 });

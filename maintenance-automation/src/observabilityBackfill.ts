@@ -32,6 +32,7 @@ import {
 import { tmpdir } from "os";
 import * as path from "path";
 import { parseKnipReport, type KnipReport } from "./parseKnipReport";
+import { buildKnipArguments, getScanDefinition, type ScanMode } from "./cli";
 import {
   OBSERVABILITY_SCHEMA_VERSION,
   addSnapshotMovement,
@@ -222,10 +223,23 @@ function parseKnipOutput(output: string): ReturnType<typeof parseKnipReport> {
   return parseKnipReport(parsed as KnipReport);
 }
 
+export function buildHistoricalKnipArguments(
+  automationRoot: string,
+  frontendRoot: string,
+  mode: ScanMode,
+): string[] {
+  const scanDefinition = getScanDefinition(mode);
+  return buildKnipArguments(
+    mode,
+    frontendRoot,
+    path.join(automationRoot, scanDefinition.configFile),
+  );
+}
+
 function runKnip(
   automationRoot: string,
   frontendRoot: string,
-  configFile: string,
+  mode: ScanMode,
 ): ReturnType<typeof parseKnipReport> {
   const knipExecutable = path.join(
     automationRoot,
@@ -238,17 +252,7 @@ function runKnip(
   }
   const output = runCommand(
     knipExecutable,
-    [
-      "--directory",
-      frontendRoot,
-      "--config",
-      path.join(automationRoot, configFile),
-      "--production",
-      "--include",
-      "files,exports,types,enumMembers",
-      "--reporter",
-      "json",
-    ],
+    buildHistoricalKnipArguments(automationRoot, frontendRoot, mode),
     automationRoot,
     [0, 1],
   );
@@ -289,11 +293,11 @@ function scanCommit(
       "dir",
     );
     return {
-      production: runKnip(automationRoot, historicalFrontendRoot, "knip.json"),
+      production: runKnip(automationRoot, historicalFrontendRoot, "production"),
       productionPlusTests: runKnip(
         automationRoot,
         historicalFrontendRoot,
-        "knip-production-plus-tests.json",
+        "productionPlusTests",
       ),
     };
   } finally {
@@ -330,8 +334,8 @@ function createBenchmark(
   after: FindingSnapshot,
 ): HistoricalBenchmark {
   const acceptedFilePaths = acceptedBenchmarkFiles(repositoryRoot);
-  const beforePaths = new Set(before.affectedFilePaths);
-  const afterPaths = new Set(after.affectedFilePaths);
+  const beforePaths = new Set(before.runtimeCandidatePaths);
+  const afterPaths = new Set(after.runtimeCandidatePaths);
   return {
     benchmarkId: "superset-pr-41072",
     label: "Human-reviewed Knip cleanup",
@@ -340,16 +344,16 @@ function createBenchmark(
     beforeCommitSha: BENCHMARK_BEFORE_SHA,
     afterCommitSha: BENCHMARK_AFTER_SHA,
     acceptedFilePaths,
-    acceptedFilesDetectedBefore: acceptedFilePaths.filter((filePath) =>
-      beforePaths.has(filePath),
+    acceptedRuntimeCandidatePathsDetectedBefore: acceptedFilePaths.filter(
+      (filePath) => beforePaths.has(filePath),
     ).length,
-    acceptedFilesRemainingAfter: acceptedFilePaths.filter((filePath) =>
-      afterPaths.has(filePath),
+    acceptedRuntimeCandidatePathsRemainingAfter: acceptedFilePaths.filter(
+      (filePath) => afterPaths.has(filePath),
     ).length,
-    beforeAffectedFileCount: before.affectedFileCount,
-    afterAffectedFileCount: after.affectedFileCount,
-    beforeSharedFindingCount: before.sharedFindingCount,
-    afterSharedFindingCount: after.sharedFindingCount,
+    beforeRuntimeCandidatePathCount: before.runtimeCandidatePathCount,
+    afterRuntimeCandidatePathCount: after.runtimeCandidatePathCount,
+    beforeAnalyzerSignalCount: before.analyzerSignalCount,
+    afterAnalyzerSignalCount: after.analyzerSignalCount,
   };
 }
 
