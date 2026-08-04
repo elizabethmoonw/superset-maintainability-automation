@@ -18,7 +18,11 @@
     "devin:start": "node dist/devinApi.js start",
     "devin:poll": "node dist/devinApi.js poll",
     "compare": "npm run build && node dist/cli.js compare",
-    "demo": "npm run build && node dist/demo.js"
+    "demo": "npm run build && node dist/demo.js",
+    "observability:backfill": "npm run build && node dist/observabilityBackfill.js",
+    "observability:dashboard": "npm run build && node dist/observabilityDashboard.js",
+    "observability:site": "npm run observability:backfill -- --months 6 --output reports/site/observability-history.json && npm run observability:dashboard -- --input reports/site/observability-history.json --ledger reports/batch-ledger.json --output reports/site/index.html",
+    "observability": "npm run observability:backfill -- --months 6 && npm run observability:dashboard"
   },
   "keywords": [],
   "author": "",
