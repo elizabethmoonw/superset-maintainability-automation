@@ -82,20 +82,48 @@ const FINDING = {
 };
 
 const BATCH: ActionableBatch = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   evidenceNotice: EVIDENCE_NOTICE,
-  selectionLimit: 10,
-  totalIntersectionCount: 1,
-  findings: [
-    {
-      findingKey: "exports\0src/unused.ts\0unusedExport",
-      issueType: "exports",
-      normalizedPath: "src/unused.ts",
-      symbolName: "unusedExport",
-      productionEvidence: FINDING,
-      productionPlusTestsEvidence: FINDING,
-    },
-  ],
+  batchTargetSize: 10,
+  inventory: {
+    totalFindingCount: 1,
+    totalFileCount: 1,
+    findings: [
+      {
+        findingKey: "exports\0src/unused.ts\0unusedExport",
+        issueType: "exports",
+        normalizedPath: "src/unused.ts",
+        symbolName: "unusedExport",
+        productionEvidence: FINDING,
+        productionPlusTestsEvidence: FINDING,
+      },
+    ],
+    candidateGroups: [
+      {
+        groupKey: "src/unused.ts",
+        normalizedPath: "src/unused.ts",
+        findingKeys: ["exports\0src/unused.ts\0unusedExport"],
+        findingCount: 1,
+      },
+    ],
+  },
+  selectedBatch: {
+    batchKey: "batch-digest",
+    groupKeys: ["src/unused.ts"],
+    filePaths: ["src/unused.ts"],
+    findingCount: 1,
+    oversizedSingleFile: false,
+    findings: [
+      {
+        findingKey: "exports\0src/unused.ts\0unusedExport",
+        issueType: "exports",
+        normalizedPath: "src/unused.ts",
+        symbolName: "unusedExport",
+        productionEvidence: FINDING,
+        productionPlusTestsEvidence: FINDING,
+      },
+    ],
+  },
 };
 
 const RUNNING_SESSION: DevinSession = {
@@ -103,12 +131,14 @@ const RUNNING_SESSION: DevinSession = {
   url: "https://app.devin.ai/sessions/devin-session-1",
   status: "running",
   statusDetail: "working",
+  acusConsumed: 2.5,
   createdAt: "2026-08-03T10:00:00.000Z",
   tags: ["maintenance-recovery"],
   pullRequests: [],
 };
 
 interface RawSession {
+  acus_consumed: number;
   session_id: string;
   url: string;
   status: DevinSession["status"];
@@ -124,6 +154,7 @@ function sessionBody(
   overrides: Partial<RawSession> = {},
 ): RawSession {
   return {
+    acus_consumed: 2.5,
     session_id: "devin-session-1",
     url: "https://app.devin.ai/sessions/devin-session-1",
     status,
@@ -166,7 +197,7 @@ const CREATE_REQUEST = {
   prompt: "Investigate evidence",
   repos: ["https://github.com/example/superset"],
   title: "Maintenance evidence",
-  maxAcuLimit: 5,
+  maxAcuLimit: 50,
   tags: ["maintenance-recovery"],
 };
 
@@ -207,7 +238,7 @@ test("create session uses only documented v3 request fields", async () => {
     prompt: "Investigate evidence",
     repos: ["https://github.com/example/superset"],
     title: "Maintenance evidence",
-    max_acu_limit: 5,
+    max_acu_limit: 50,
     bypass_approval: true,
     structured_output_required: false,
     tags: ["maintenance-recovery"],
@@ -238,8 +269,23 @@ test("v3 response accepts nullable PR state and user usage suspension detail", a
   const session = await client.getSession("devin-session-1");
 
   expect(session.statusDetail).toBe("user_usage_limit_exceeded");
+  expect(session.acusConsumed).toBe(2.5);
   expect(session.pullRequests[0].state).toBeNull();
   expect(session.createdAt).toBe("2026-08-03T10:00:00.000Z");
+});
+
+test("v3 response rejects invalid ACU consumption", async () => {
+  const fetchMock = jest
+    .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+    .mockResolvedValue(sessionResponse("running", [], { acus_consumed: -1 }));
+  const client = new DevinApiClient(
+    { apiKey: "token", organizationId: "org-example" },
+    fetchMock,
+  );
+
+  await expect(client.getSession("devin-session-1")).rejects.toThrow(
+    "invalid session response",
+  );
 });
 
 test("each API request aborts at its configured timeout", async () => {
@@ -381,6 +427,7 @@ test("crash recovery reuses one matching tagged session with its original time",
     "https://github.com/example/superset/issues/7",
     result.session,
     result.reused,
+    50,
   );
 
   expect(result.reused).toBe(true);
@@ -549,6 +596,7 @@ test("timeout remains explicit when session termination fails", async () => {
       "https://github.com/example/superset/issues/7",
       RUNNING_SESSION,
       false,
+      50,
     ),
     result,
     "2026-08-03T10:30:00.000Z",
@@ -570,12 +618,24 @@ test("timeout remains explicit when session termination fails", async () => {
   expect(completed.devin?.draftPullRequestUrl).toBeUndefined();
 });
 
-test("completed status reports progress, throughput, links, and terminal failures", () => {
+test("completed status reports one batch outcome rather than one outcome per finding", () => {
+  const tenFindingStatus: RunStatus = {
+    ...RUN_STATUS,
+    batchSize: 10,
+    progress: {
+      selected: 10,
+      active: 0,
+      completed: 0,
+      succeeded: 0,
+      failed: 0,
+    },
+  };
   const started = createRunningStatus(
-    RUN_STATUS,
+    tenFindingStatus,
     "https://github.com/example/superset/issues/7",
     RUNNING_SESSION,
     false,
+    50,
   );
   const succeeded = createCompletedStatus(
     started,
@@ -585,6 +645,7 @@ test("completed status reports progress, throughput, links, and terminal failure
         ...RUNNING_SESSION,
         status: "exit",
         statusDetail: "finished",
+        acusConsumed: 12.75,
         pullRequests: [
           {
             state: "open",
@@ -603,6 +664,7 @@ test("completed status reports progress, throughput, links, and terminal failure
         ...RUNNING_SESSION,
         status: "suspended",
         statusDetail: "out_of_credits",
+        acusConsumed: 7,
       },
     },
     "2026-08-03T10:30:00.000Z",
@@ -621,9 +683,51 @@ test("completed status reports progress, throughput, links, and terminal failure
   expect(renderDevinSummary(succeeded)).toContain(
     "https://github.com/example/superset/pull/9",
   );
+  expect(renderDevinSummary(succeeded)).toContain("Findings in batch: 10");
+  expect(renderDevinSummary(succeeded)).toContain(
+    "Batches with a verified draft PR: 1",
+  );
+  expect(renderDevinSummary(succeeded)).toContain("Per-session ACU cap: 50");
+  expect(renderDevinSummary(succeeded)).toContain("ACUs consumed: 12.75");
+  expect(succeeded.devin?.acusConsumed).toBe(12.75);
   expect(failed.state).toBe("devin-failed");
   expect(failed.failure).toContain("out_of_credits");
   expect(failed.devin?.draftPullRequestUrl).toBeUndefined();
+});
+
+test("completed status still requires exactly one pull request", () => {
+  const started = createRunningStatus(
+    RUN_STATUS,
+    "https://github.com/example/superset/issues/7",
+    RUNNING_SESSION,
+    false,
+    50,
+  );
+  const pullRequest = {
+    state: "open",
+    url: "https://github.com/example/superset/pull/9",
+  };
+
+  for (const pullRequests of [[], [pullRequest, pullRequest]]) {
+    const completed = createCompletedStatus(
+      started,
+      {
+        timedOut: false,
+        session: {
+          ...RUNNING_SESSION,
+          status: "exit",
+          statusDetail: "finished",
+          pullRequests,
+        },
+      },
+      "2026-08-03T10:30:00.000Z",
+    );
+
+    expect(completed.state).toBe("devin-failed");
+    expect(completed.failure).toBe(
+      `Devin completed with ${pullRequests.length} pull requests; expected exactly one`,
+    );
+  }
 });
 
 test("observed status exposes API transitions without completing the run", () => {
@@ -632,11 +736,17 @@ test("observed status exposes API transitions without completing the run", () =>
     "https://github.com/example/superset/issues/7",
     RUNNING_SESSION,
     false,
+    50,
   );
 
   const observed = createObservedStatus(
     running,
-    { ...RUNNING_SESSION, status: "claimed", statusDetail: "waiting_for_user" },
+    {
+      ...RUNNING_SESSION,
+      status: "claimed",
+      statusDetail: "waiting_for_user",
+      acusConsumed: 3.75,
+    },
     "2026-08-03T10:05:00.000Z",
   );
 
@@ -645,6 +755,7 @@ test("observed status exposes API transitions without completing the run", () =>
     expect.objectContaining({
       apiStatus: "claimed",
       statusDetail: "waiting_for_user",
+      acusConsumed: 3.75,
       elapsedMilliseconds: 300_000,
     }),
   );

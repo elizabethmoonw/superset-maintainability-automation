@@ -18,17 +18,25 @@
  */
 
 import { createHash } from "crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import * as path from "path";
+import {
+  type BatchAttempt,
+  type BatchLedger,
+  createEmptyBatchLedger,
+  parseBatchLedger,
+} from "./batchLedger";
 import { type NormalizedFinding } from "./parseKnipReport";
 
-export const MAX_ACTIONABLE_FINDINGS = 10;
+export const BATCH_TARGET_FINDINGS = 10;
+export const MAX_ACTIONABLE_FINDINGS = BATCH_TARGET_FINDINGS;
 export const EVIDENCE_NOTICE =
   "Knip findings are evidence to investigate, not approved deletions.";
 
 export type MaintenanceRunState =
   | "scan-failed"
   | "no-action-needed"
+  | "no-eligible-batch"
   | "awaiting-approval"
   | "approval-rejected"
   | "devin-running"
@@ -57,6 +65,8 @@ export interface DevinRunStatus {
   startedAt: string;
   completedAt?: string;
   elapsedMilliseconds: number;
+  maxAcuLimit?: number;
+  acusConsumed?: number;
 }
 
 export interface ActionableBatchFinding {
@@ -68,12 +78,35 @@ export interface ActionableBatchFinding {
   productionPlusTestsEvidence: NormalizedFinding;
 }
 
-export interface ActionableBatch {
-  schemaVersion: 1;
-  evidenceNotice: string;
-  selectionLimit: number;
-  totalIntersectionCount: number;
+export interface CandidateGroup {
+  groupKey: string;
+  normalizedPath: string;
+  findingKeys: string[];
+  findingCount: number;
+}
+
+export interface FindingInventory {
+  totalFindingCount: number;
+  totalFileCount: number;
   findings: ActionableBatchFinding[];
+  candidateGroups: CandidateGroup[];
+}
+
+export interface SelectedBatch {
+  batchKey: string;
+  groupKeys: string[];
+  filePaths: string[];
+  findingCount: number;
+  oversizedSingleFile: boolean;
+  findings: ActionableBatchFinding[];
+}
+
+export interface ActionableBatch {
+  schemaVersion: 2;
+  evidenceNotice: string;
+  batchTargetSize: number;
+  inventory: FindingInventory;
+  selectedBatch: SelectedBatch | null;
 }
 
 export interface ScanCount {
@@ -129,6 +162,11 @@ export interface GeneratedRunArtifacts {
   status: RunStatus;
   summaryMarkdown: string;
   issueMarkdown: string;
+}
+
+export interface BatchSelectionOptions {
+  ledger?: BatchLedger;
+  targetFindingCount?: number;
 }
 
 const ISSUE_TYPES: IssueType[] = ["enumMembers", "exports", "files", "types"];
@@ -202,6 +240,7 @@ function indexFindings(
 export function generateActionableBatch(
   productionFindings: readonly NormalizedFinding[],
   productionPlusTestsFindings: readonly NormalizedFinding[],
+  options: BatchSelectionOptions = {},
 ): ActionableBatch {
   const production = indexFindings(productionFindings);
   const productionPlusTests = indexFindings(productionPlusTestsFindings);
@@ -209,7 +248,7 @@ export function generateActionableBatch(
     .filter((key) => productionPlusTests.has(key))
     .sort(compareStrings);
 
-  const findings = sharedKeys.slice(0, MAX_ACTIONABLE_FINDINGS).map((key) => {
+  const findings = sharedKeys.map((key) => {
     const productionEvidence = production.get(key);
     const productionPlusTestsEvidence = productionPlusTests.get(key);
     if (
@@ -229,12 +268,143 @@ export function generateActionableBatch(
     };
   });
 
-  return {
-    schemaVersion: 1,
-    evidenceNotice: EVIDENCE_NOTICE,
-    selectionLimit: MAX_ACTIONABLE_FINDINGS,
-    totalIntersectionCount: sharedKeys.length,
+  const candidateGroups = createCandidateGroups(findings);
+  const targetFindingCount =
+    options.targetFindingCount ?? BATCH_TARGET_FINDINGS;
+  const selectedBatch = selectBatch(
+    candidateGroups,
     findings,
+    options.ledger ?? createEmptyBatchLedger(),
+    targetFindingCount,
+  );
+
+  return {
+    schemaVersion: 2,
+    evidenceNotice: EVIDENCE_NOTICE,
+    batchTargetSize: targetFindingCount,
+    inventory: {
+      totalFindingCount: findings.length,
+      totalFileCount: candidateGroups.length,
+      findings,
+      candidateGroups,
+    },
+    selectedBatch,
+  };
+}
+
+function createCandidateGroups(
+  findings: readonly ActionableBatchFinding[],
+): CandidateGroup[] {
+  const findingKeysByPath = new Map<string, string[]>();
+  for (const finding of findings) {
+    const findingKeys = findingKeysByPath.get(finding.normalizedPath) ?? [];
+    findingKeysByPath.set(finding.normalizedPath, [
+      ...findingKeys,
+      finding.findingKey,
+    ]);
+  }
+  return [...findingKeysByPath.entries()]
+    .sort(([left], [right]) => compareStrings(left, right))
+    .map(([normalizedPath, findingKeys]) => ({
+      groupKey: normalizedPath,
+      normalizedPath,
+      findingKeys,
+      findingCount: findingKeys.length,
+    }));
+}
+
+interface GroupPriority {
+  group: CandidateGroup;
+  latestAttempt?: BatchAttempt;
+}
+
+function getLatestAttempt(
+  group: CandidateGroup,
+  attempts: readonly BatchAttempt[],
+): BatchAttempt | undefined {
+  return attempts
+    .filter(
+      (attempt) =>
+        attempt.groupKeys.includes(group.groupKey) ||
+        attempt.findingKeys.some((key) => group.findingKeys.includes(key)),
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.offeredAt) - Date.parse(left.offeredAt) ||
+        compareStrings(right.attemptId, left.attemptId),
+    )[0];
+}
+
+function compareGroupPriority(
+  left: GroupPriority,
+  right: GroupPriority,
+): number {
+  if (left.latestAttempt === undefined && right.latestAttempt !== undefined) {
+    return -1;
+  }
+  if (left.latestAttempt !== undefined && right.latestAttempt === undefined) {
+    return 1;
+  }
+  if (left.latestAttempt !== undefined && right.latestAttempt !== undefined) {
+    const offeredComparison =
+      Date.parse(left.latestAttempt.offeredAt) -
+      Date.parse(right.latestAttempt.offeredAt);
+    if (offeredComparison !== 0) {
+      return offeredComparison;
+    }
+  }
+  return compareStrings(left.group.groupKey, right.group.groupKey);
+}
+
+function selectBatch(
+  groups: readonly CandidateGroup[],
+  findings: readonly ActionableBatchFinding[],
+  ledger: BatchLedger,
+  targetFindingCount: number,
+): SelectedBatch | null {
+  const eligible = groups
+    .map((group) => ({
+      group,
+      latestAttempt: getLatestAttempt(group, ledger.attempts),
+    }))
+    .filter(({ latestAttempt }) => latestAttempt?.outcome !== "draft-pr-open")
+    .sort(compareGroupPriority);
+  const selectedGroups: CandidateGroup[] = [];
+  let selectedFindingCount = 0;
+  for (const { group } of eligible) {
+    if (
+      selectedGroups.length === 0 &&
+      group.findingCount > targetFindingCount
+    ) {
+      selectedGroups.push(group);
+      break;
+    }
+    if (selectedFindingCount + group.findingCount <= targetFindingCount) {
+      selectedGroups.push(group);
+      selectedFindingCount += group.findingCount;
+    }
+  }
+  if (selectedGroups.length === 0) {
+    return null;
+  }
+  const selectedFindingKeys = new Set(
+    selectedGroups.flatMap((group) => group.findingKeys),
+  );
+  const selectedFindings = findings.filter((finding) =>
+    selectedFindingKeys.has(finding.findingKey),
+  );
+  const groupKeys = selectedGroups.map((group) => group.groupKey);
+  return {
+    batchKey: calculateDigest(
+      selectedFindings.map(({ findingKey }) => findingKey).join("\u0000"),
+    ),
+    groupKeys,
+    filePaths: groupKeys,
+    findingCount: selectedFindings.length,
+    oversizedSingleFile:
+      selectedGroups.length === 1 &&
+      selectedFindings.length > targetFindingCount,
+    findings: selectedFindings,
   };
 }
 
@@ -275,11 +445,14 @@ function escapeMarkdown(value: string): string {
 }
 
 function renderFindings(batch: ActionableBatch): string {
-  if (batch.findings.length === 0) {
-    return "No findings were present in both processed reports.\n";
+  const selectedFindings = batch.selectedBatch?.findings ?? [];
+  if (selectedFindings.length === 0) {
+    return batch.inventory.totalFindingCount === 0
+      ? "No findings were present in both processed reports.\n"
+      : "No eligible batch is available; all current candidates have an open pull request.\n";
   }
 
-  const rows = batch.findings.map(
+  const rows = selectedFindings.map(
     (finding) =>
       `| ${finding.issueType} | \`${escapeMarkdown(finding.normalizedPath)}\` | ${escapeMarkdown(finding.symbolName || "—")} |`,
   );
@@ -303,8 +476,8 @@ function renderStatus(status: RunStatus): string {
     `- Production by type: ${renderTypeCounts(status.scanCounts.production)}`,
     `- Production-plus-tests findings: ${status.scanCounts.productionPlusTests.total}`,
     `- Production-plus-tests by type: ${renderTypeCounts(status.scanCounts.productionPlusTests)}`,
-    `- Intersection findings: ${status.scanCounts.intersection}`,
-    `- Selected evidence: ${status.batchSize}`,
+    `- Shared finding inventory: ${status.scanCounts.intersection}`,
+    `- Selected batch findings: ${status.batchSize}`,
     `- Report digest: \`${status.reportDigest}\``,
     `- Batch digest: \`${status.batchDigest}\``,
     `- Started: \`${status.timestamps.startedAt}\``,
@@ -321,8 +494,12 @@ function createRunStatus(
   reportDigest: string,
   context: RunContext,
 ): RunStatus {
-  const state: MaintenanceRunState =
-    batch.findings.length === 0 ? "no-action-needed" : "awaiting-approval";
+  const selectedFindingCount = batch.selectedBatch?.findingCount ?? 0;
+  const state: MaintenanceRunState = batch.selectedBatch
+    ? "awaiting-approval"
+    : batch.inventory.totalFindingCount === 0
+      ? "no-action-needed"
+      : "no-eligible-batch";
   return {
     schemaVersion: 1,
     runId: context.runId,
@@ -332,12 +509,12 @@ function createRunStatus(
     scanCounts: {
       production: countFindings(productionFindings),
       productionPlusTests: countFindings(productionPlusTestsFindings),
-      intersection: batch.totalIntersectionCount,
+      intersection: batch.inventory.totalFindingCount,
     },
-    batchSize: batch.findings.length,
+    batchSize: selectedFindingCount,
     state,
     progress: {
-      selected: batch.findings.length,
+      selected: selectedFindingCount === 0 ? 0 : 1,
       active: 0,
       completed: 0,
       succeeded: 0,
@@ -397,10 +574,12 @@ export function generateRunArtifacts(
   productionReport: string,
   productionPlusTestsReport: string,
   context: RunContext,
+  options: BatchSelectionOptions = {},
 ): GeneratedRunArtifacts {
   const batch = generateActionableBatch(
     productionFindings,
     productionPlusTestsFindings,
+    options,
   );
   const batchJson = serializeActionableBatch(batch);
   const batchDigest = calculateDigest(batchJson);
@@ -488,6 +667,10 @@ export function main(): void {
     throw new Error("MAINTENANCE_STARTED_AT must be an ISO-8601 timestamp");
   }
 
+  const ledgerPath =
+    process.env.MAINTENANCE_BATCH_LEDGER_PATH ??
+    path.join(reportsDirectory, "batch-ledger.json");
+  const ledger = readFileIfPresent(ledgerPath);
   const artifacts = generateRunArtifacts(
     readProcessedFindings(productionPath),
     readProcessedFindings(productionPlusTestsPath),
@@ -502,6 +685,7 @@ export function main(): void {
       completedAt: new Date().toISOString(),
       artifactName: requireEnvironment("MAINTENANCE_ARTIFACT_NAME"),
     },
+    { ledger },
   );
 
   mkdirSync(reportsDirectory, { recursive: true });
@@ -521,6 +705,12 @@ export function main(): void {
     path.join(reportsDirectory, "remediation-issue.md"),
     artifacts.issueMarkdown,
   );
+}
+
+function readFileIfPresent(filePath: string): BatchLedger {
+  return existsSync(filePath)
+    ? parseBatchLedger(readFileSync(filePath, "utf8"))
+    : createEmptyBatchLedger();
 }
 
 if (require.main === module) {

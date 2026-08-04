@@ -51,12 +51,148 @@ jobs:
         working-directory: maintenance-automation
         run: npm ci
 
+      - name: Load durable batch attempt ledger
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          MAINTENANCE_LABEL: maintenance-automation
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const markerPattern = /<!-- maintenance-batch-attempt:([A-Za-z0-9_-]+) -->/g;
+            const { owner, repo } = context.repo;
+            const maintenanceIssues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner,
+                repo,
+                state: 'all',
+                labels: process.env.MAINTENANCE_LABEL,
+                per_page: 100,
+              },
+            );
+            const attempts = [];
+            const attemptRecords = [];
+
+            for (const issue of maintenanceIssues) {
+              if (issue.pull_request) continue;
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                {
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  per_page: 100,
+                },
+              );
+              for (const comment of comments) {
+                if (comment.user?.login !== 'github-actions[bot]') continue;
+                for (const match of (comment.body ?? '').matchAll(markerPattern)) {
+                  try {
+                    const attempt = JSON.parse(
+                      Buffer.from(match[1], 'base64url').toString('utf8'),
+                    );
+                    attempts.push(attempt);
+                    attemptRecords.push({ attempt, issueNumber: issue.number });
+                  } catch (error) {
+                    core.warning(
+                      `Ignoring malformed batch attempt marker in comment ${comment.html_url}`,
+                    );
+                  }
+                }
+              }
+            }
+
+            const latestByBatchKey = new Map();
+            for (const record of attemptRecords) {
+              const previous = latestByBatchKey.get(record.attempt.batchKey);
+              const isLater = previous === undefined ||
+                Date.parse(record.attempt.offeredAt) >
+                  Date.parse(previous.attempt.offeredAt) ||
+                (
+                  record.attempt.offeredAt === previous.attempt.offeredAt &&
+                  record.attempt.attemptId > previous.attempt.attemptId
+                );
+              if (isLater) latestByBatchKey.set(record.attempt.batchKey, record);
+            }
+
+            for (const { attempt, issueNumber } of latestByBatchKey.values()) {
+              if (attempt.outcome !== 'draft-pr-open' || !attempt.pullRequestUrl) {
+                continue;
+              }
+              try {
+                const pullUrl = new URL(attempt.pullRequestUrl);
+                const match = pullUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)$/);
+                if (
+                  pullUrl.hostname !== 'github.com' ||
+                  !match ||
+                  match[1] !== owner ||
+                  match[2] !== repo
+                ) {
+                  throw new Error('attempt references a pull request outside this repository');
+                }
+                const pullNumber = Number(match[3]);
+                const pull = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: pullNumber,
+                });
+                const outcome = pull.data.merged_at
+                  ? 'pr-merged'
+                  : pull.data.state === 'closed'
+                    ? 'pr-closed-unmerged'
+                    : undefined;
+                if (!outcome) continue;
+
+                const transition = {
+                  ...attempt,
+                  attemptId: `${attempt.attemptId}-pr-${pullNumber}-${outcome}`,
+                  outcome,
+                };
+                if (attempts.some(({ attemptId }) => attemptId === transition.attemptId)) {
+                  continue;
+                }
+                const marker = Buffer.from(JSON.stringify(transition)).toString('base64url');
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  body: [
+                    `Batch pull request outcome recorded: \`${outcome}\`.`,
+                    '',
+                    `<!-- maintenance-batch-attempt:${marker} -->`,
+                  ].join('\n'),
+                });
+                attempts.push(transition);
+              } catch (error) {
+                core.warning(
+                  `Could not reconcile open batch attempt ${attempt.attemptId}: ${error.message}`,
+                );
+              }
+            }
+
+            const ledgerPath = path.resolve(
+              'maintenance-automation/reports/batch-ledger.json',
+            );
+            fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+            fs.writeFileSync(
+              ledgerPath,
+              `${JSON.stringify({ schemaVersion: 1, attempts }, null, 2)}\n`,
+            );
+            core.info(`Loaded ${attempts.length} durable batch attempts`);
+
       - name: Run both scans and prepare batch
         working-directory: maintenance-automation
         env:
           MAINTENANCE_ARTIFACT_NAME: maintenance-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          MAINTENANCE_MAX_BATCHES_PER_RUN: ${{ vars.MAINTENANCE_MAX_BATCHES_PER_RUN || '1' }}
           MAINTENANCE_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: npm run workflow:prepare
+        run: |
+          if [ "$MAINTENANCE_MAX_BATCHES_PER_RUN" != "1" ]; then
+            echo "This workflow increment supports exactly one sequential batch per run" >&2
+            exit 1
+          fi
+          npm run workflow:prepare
 
       - name: Read run metadata
         id: metadata
@@ -317,7 +453,7 @@ jobs:
         working-directory: maintenance-automation
         env:
           DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
-          DEVIN_MAX_ACU_LIMIT: ${{ vars.DEVIN_MAX_ACU_LIMIT || '5' }}
+          DEVIN_MAX_ACU_LIMIT: ${{ vars.DEVIN_MAX_ACU_LIMIT || '50' }}
           DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
           EXISTING_DEVIN_SESSION_ID: ${{ needs.prepare.outputs.existing-devin-session-id }}
           MAINTENANCE_ISSUE_URL: ${{ needs.prepare.outputs.issue-url }}
@@ -479,6 +615,36 @@ jobs:
               issue_number: Number(process.env.ISSUE_NUMBER),
               body: issueBody,
             });
+            const batch = JSON.parse(
+              fs.readFileSync(path.join(reportsDirectory, 'actionable-batch.json'), 'utf8'),
+            );
+            const selectedBatch = batch.selectedBatch;
+            if (selectedBatch) {
+              const outcome = status.state === 'draft-pr-ready'
+                ? 'draft-pr-open'
+                : 'devin-failed';
+              const attempt = {
+                attemptId: `${status.runId}-${process.env.GITHUB_RUN_ATTEMPT}`,
+                batchKey: selectedBatch.batchKey,
+                groupKeys: selectedBatch.groupKeys,
+                findingKeys: selectedBatch.findings.map(({ findingKey }) => findingKey),
+                offeredAt: status.timestamps.startedAt,
+                outcome,
+                ...(status.devin?.draftPullRequestUrl
+                  ? { pullRequestUrl: status.devin.draftPullRequestUrl }
+                  : {}),
+              };
+              const marker = Buffer.from(JSON.stringify(attempt)).toString('base64url');
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: Number(process.env.ISSUE_NUMBER),
+                body: [
+                  `Batch attempt recorded: \`${outcome}\`.`,
+                  '',
+                  `<!-- maintenance-batch-attempt:${marker} -->`,
+                ].join('\n'),
+              });
+            }
             fs.appendFileSync(
               process.env.GITHUB_STEP_SUMMARY,
               `\n${fs.readFileSync(path.join(reportsDirectory, 'devin-summary.md'), 'utf8')}`,
@@ -539,18 +705,19 @@ jobs:
             const failure = approvalValidated
               ? 'Remediation job failed after approval validation'
               : 'Protected environment approval was rejected or expired before validation';
-            const completed = approvalValidated ? status.batchSize : 0;
+            const selectedBatches = status.batchSize === 0 ? 0 : 1;
+            const completedBatches = approvalValidated ? selectedBatches : 0;
             const finalStatus = {
               ...status,
               state,
               failure,
               progress: {
-                selected: status.batchSize,
+                selected: selectedBatches,
                 active: 0,
-                completed,
+                completed: completedBatches,
                 succeeded: 0,
-                failed: completed,
-                ...(completed === 0 ? {} : { successRate: 0 }),
+                failed: completedBatches,
+                ...(completedBatches === 0 ? {} : { successRate: 0 }),
               },
             };
             const summary = [
@@ -559,9 +726,10 @@ jobs:
               `- State: \`${state}\``,
               `- Failure: ${failure}`,
               `- Issue: ${status.issueUrl ?? process.env.ISSUE_URL}`,
-              `- Selected: ${status.batchSize}`,
-              `- Completed: ${completed}`,
-              `- Failed: ${completed}`,
+              `- Findings in batch: ${status.batchSize}`,
+              `- Batches selected: ${selectedBatches}`,
+              `- Batches completed: ${completedBatches}`,
+              `- Failed batches: ${completedBatches}`,
               '',
             ].join('\n');
             fs.writeFileSync(statusPath, `${JSON.stringify(finalStatus, null, 2)}\n`);
@@ -575,6 +743,36 @@ jobs:
               issue_number: Number(process.env.ISSUE_NUMBER),
               body: `${issueBase}\n\n${summary}`,
             });
+            const batch = JSON.parse(
+              fs.readFileSync(
+                path.join(reportsDirectory, 'actionable-batch.json'),
+                'utf8',
+              ),
+            );
+            const selectedBatch = batch.selectedBatch;
+            if (selectedBatch) {
+              const outcome = approvalValidated
+                ? 'devin-failed'
+                : 'approval-rejected';
+              const attempt = {
+                attemptId: `${status.runId}-${process.env.GITHUB_RUN_ATTEMPT}`,
+                batchKey: selectedBatch.batchKey,
+                groupKeys: selectedBatch.groupKeys,
+                findingKeys: selectedBatch.findings.map(({ findingKey }) => findingKey),
+                offeredAt: status.timestamps.startedAt,
+                outcome,
+              };
+              const marker = Buffer.from(JSON.stringify(attempt)).toString('base64url');
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: Number(process.env.ISSUE_NUMBER),
+                body: [
+                  `Batch attempt recorded: \`${outcome}\`.`,
+                  '',
+                  `<!-- maintenance-batch-attempt:${marker} -->`,
+                ].join('\n'),
+              });
+            }
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
 
       - name: Upload fallback final status

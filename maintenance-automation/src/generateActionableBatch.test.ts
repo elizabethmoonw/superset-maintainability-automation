@@ -18,8 +18,8 @@
  */
 
 import {
+  BATCH_TARGET_FINDINGS,
   EVIDENCE_NOTICE,
-  MAX_ACTIONABLE_FINDINGS,
   calculateDigest,
   createFindingKey,
   generateActionableBatch,
@@ -95,8 +95,9 @@ test("batch selects only findings present in both reports and preserves both evi
     ],
   );
 
-  expect(batch.totalIntersectionCount).toBe(1);
-  expect(batch.findings).toEqual([
+  expect(batch.inventory.totalFindingCount).toBe(1);
+  expect(batch.inventory.totalFileCount).toBe(1);
+  expect(batch.selectedBatch?.findings).toEqual([
     expect.objectContaining({
       normalizedPath: "src/shared.ts",
       symbolName: "sharedValue",
@@ -107,7 +108,7 @@ test("batch selects only findings present in both reports and preserves both evi
   expect(batch.evidenceNotice).toBe(EVIDENCE_NOTICE);
 });
 
-test("batch sorting and serialization are deterministic and capped at ten findings", () => {
+test("batch preserves the inventory while selecting a deterministic batch", () => {
   const findings = Array.from({ length: 12 }, (_, index) =>
     createFinding(
       "exports",
@@ -121,14 +122,17 @@ test("batch sorting and serialization are deterministic and capped at ten findin
     [...findings].reverse(),
   );
 
-  expect(forward.totalIntersectionCount).toBe(12);
-  expect(forward.findings).toHaveLength(MAX_ACTIONABLE_FINDINGS);
+  expect(forward.inventory.totalFindingCount).toBe(12);
+  expect(forward.inventory.findings).toHaveLength(12);
+  expect(forward.selectedBatch?.findings).toHaveLength(BATCH_TARGET_FINDINGS);
   expect(serializeActionableBatch(forward)).toBe(
     serializeActionableBatch(reversed),
   );
-  expect(forward.findings.map((finding) => finding.normalizedPath)).toEqual(
+  expect(
+    forward.selectedBatch?.findings.map((finding) => finding.normalizedPath),
+  ).toEqual(
     findings
-      .slice(0, MAX_ACTIONABLE_FINDINGS)
+      .slice(0, BATCH_TARGET_FINDINGS)
       .map((finding) => finding.normalizedPath),
   );
 });
@@ -170,9 +174,9 @@ test("duplicate identities use numeric line and column order independent of inpu
     [plusTestsEvidence],
   );
 
-  expect(first.findings).toHaveLength(1);
-  expect(first.findings[0].productionEvidence.line).toBe(4);
-  expect(first.findings[0].productionEvidence.col).toBe(2);
+  expect(first.selectedBatch?.findings).toHaveLength(1);
+  expect(first.selectedBatch?.findings[0].productionEvidence.line).toBe(4);
+  expect(first.selectedBatch?.findings[0].productionEvidence.col).toBe(2);
   expect(first).toEqual(second);
 });
 
@@ -210,6 +214,13 @@ test("run artifacts contain concise status metadata and a content-addressed batc
       commitSha: RUN_CONTEXT.commitSha,
       batchSize: 1,
       state: "awaiting-approval",
+      progress: {
+        selected: 1,
+        active: 0,
+        completed: 0,
+        succeeded: 0,
+        failed: 0,
+      },
       batchDigest: calculateDigest(artifacts.batchJson),
       reportDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       issueDedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -233,10 +244,127 @@ test("run artifacts contain concise status metadata and a content-addressed batc
   expect(artifacts.issueMarkdown).toContain("`maintenance-scan-42`");
 });
 
+test("non-empty inventory blocked by open pull requests has no-eligible-batch status", () => {
+  const shared = createFinding("files", "src/shared.ts");
+  const artifacts = generateRunArtifacts(
+    [shared],
+    [shared],
+    "production report",
+    "production plus tests report",
+    RUN_CONTEXT,
+    {
+      ledger: {
+        schemaVersion: 1,
+        attempts: [
+          {
+            attemptId: "open-shared",
+            batchKey: "previous-batch",
+            groupKeys: [shared.normalizedPath],
+            findingKeys: [createFindingKey(shared)],
+            offeredAt: "2026-08-01T00:00:00.000Z",
+            outcome: "draft-pr-open",
+          },
+        ],
+      },
+    },
+  );
+
+  expect(artifacts.batch.inventory.totalFindingCount).toBe(1);
+  expect(artifacts.batch.selectedBatch).toBeNull();
+  expect(artifacts.status.state).toBe("no-eligible-batch");
+  expect(artifacts.status.batchSize).toBe(0);
+  expect(artifacts.status.progress.selected).toBe(0);
+});
+
 test("non-file findings without a symbol fail at the report boundary", () => {
   const invalidFinding = createFinding("exports", "src/invalid.ts");
 
   expect(() =>
     generateActionableBatch([invalidFinding], [invalidFinding]),
   ).toThrow("exports finding is missing a symbol name");
+});
+
+test("batch keeps every finding from a file together and permits one oversized file", () => {
+  const findings = Array.from({ length: 12 }, (_, index) =>
+    createFinding(
+      "exports",
+      "src/large.ts",
+      `symbol${String(index).padStart(2, "0")}`,
+    ),
+  );
+
+  const batch = generateActionableBatch(findings, findings);
+
+  expect(batch.inventory.candidateGroups).toEqual([
+    expect.objectContaining({
+      groupKey: "src/large.ts",
+      findingCount: 12,
+    }),
+  ]);
+  expect(batch.selectedBatch).toEqual(
+    expect.objectContaining({
+      filePaths: ["src/large.ts"],
+      findingCount: 12,
+      oversizedSingleFile: true,
+    }),
+  );
+});
+
+test("batch skips open pull requests and rotates deferred groups behind unoffered work", () => {
+  const findings = [
+    createFinding("files", "src/a.ts"),
+    createFinding("files", "src/b.ts"),
+    createFinding("files", "src/c.ts"),
+  ];
+  const keys = findings.map(createFindingKey);
+  const batch = generateActionableBatch(findings, findings, {
+    targetFindingCount: 1,
+    ledger: {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attemptId: "open-a",
+          batchKey: "old-a",
+          groupKeys: ["src/a.ts"],
+          findingKeys: [keys[0]],
+          offeredAt: "2026-07-01T00:00:00.000Z",
+          outcome: "draft-pr-open",
+        },
+        {
+          attemptId: "deferred-b",
+          batchKey: "old-b",
+          groupKeys: ["src/b.ts"],
+          findingKeys: [keys[1]],
+          offeredAt: "2026-06-01T00:00:00.000Z",
+          outcome: "approval-rejected",
+        },
+      ],
+    },
+  });
+
+  expect(batch.selectedBatch?.filePaths).toEqual(["src/c.ts"]);
+});
+
+test("least-recently-offered group is selected after every group has an attempt", () => {
+  const findings = [
+    createFinding("files", "src/a.ts"),
+    createFinding("files", "src/b.ts"),
+  ];
+  const batch = generateActionableBatch(findings, findings, {
+    targetFindingCount: 1,
+    ledger: {
+      schemaVersion: 1,
+      attempts: findings.map((finding, index) => ({
+        attemptId: `attempt-${index}`,
+        batchKey: `batch-${index}`,
+        groupKeys: [finding.normalizedPath],
+        findingKeys: [createFindingKey(finding)],
+        offeredAt:
+          index === 0 ? "2026-05-01T00:00:00.000Z" : "2026-06-01T00:00:00.000Z",
+        outcome: "deferred" as const,
+      })),
+    },
+  });
+
+  expect(batch.selectedBatch?.filePaths).toEqual(["src/a.ts"]);
 });

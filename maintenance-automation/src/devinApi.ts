@@ -32,7 +32,7 @@ import {
 export const DEVIN_API_BASE_URL = "https://api.devin.ai/v3";
 export const DEFAULT_POLL_INTERVAL_MS = 10_000;
 export const DEFAULT_TIMEOUT_MS = 3_600_000;
-export const DEFAULT_MAX_ACU_LIMIT = 5;
+export const DEFAULT_MAX_ACU_LIMIT = 50;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_REQUEST_TIMEOUT_MS = 120_000;
 export const MAX_TOTAL_TIMEOUT_MS = 70 * 60 * 1000;
@@ -75,6 +75,7 @@ export interface DevinSession {
   url: string;
   status: DevinApiStatus;
   statusDetail?: DevinStatusDetail;
+  acusConsumed: number;
   createdAt: string;
   tags: string[];
   pullRequests: DevinPullRequest[];
@@ -132,6 +133,7 @@ interface DevinSessionPage {
 }
 
 interface DevinSessionResponse {
+  acus_consumed: number;
   session_id: string;
   url: string;
   status: DevinApiStatus;
@@ -380,6 +382,9 @@ function parseSessionResponse(value: unknown): DevinSession {
     typeof value.created_at !== "number" ||
     !Number.isSafeInteger(value.created_at) ||
     value.created_at < 0 ||
+    typeof value.acus_consumed !== "number" ||
+    !Number.isFinite(value.acus_consumed) ||
+    value.acus_consumed < 0 ||
     !Array.isArray(value.tags) ||
     !value.tags.every((tag: unknown) => typeof tag === "string") ||
     !Array.isArray(value.pull_requests)
@@ -417,6 +422,7 @@ function parseSessionResponse(value: unknown): DevinSession {
     sessionId: response.session_id,
     url: response.url,
     status: response.status,
+    acusConsumed: response.acus_consumed,
     createdAt: createdAt.toISOString(),
     tags: [...response.tags],
     ...(response.status_detail === undefined || response.status_detail === null
@@ -436,6 +442,7 @@ export function buildDevinPrompt(
   batch: ActionableBatch,
   issueUrl: string,
 ): string {
+  const findings = batch.selectedBatch?.findings ?? [];
   return [
     "Investigate the approved maintenance evidence below and prepare a safe remediation.",
     "",
@@ -449,7 +456,7 @@ export function buildDevinPrompt(
     "Investigate every finding before changing code. Do not delete or modify code unless repository evidence confirms it is unused and safe to change.",
     "",
     "Approved evidence batch:",
-    ...batch.findings.map(renderFinding),
+    ...findings.map(renderFinding),
     "",
     "Required delivery:",
     `1. Create a new branch from the exact approved commit ${status.commitSha}; do not use a newer branch tip.`,
@@ -627,10 +634,11 @@ export function extractPersistedSessionReference(
 }
 
 function calculateProgress(
-  selected: number,
+  findingCount: number,
   state: RunStatus["state"],
   elapsedMilliseconds: number,
 ): TaskProgress {
+  const selected = findingCount === 0 ? 0 : 1;
   const completed =
     state === "draft-pr-ready" || state === "devin-failed" ? selected : 0;
   const succeeded = state === "draft-pr-ready" ? selected : 0;
@@ -656,6 +664,7 @@ export function createRunningStatus(
   issueUrl: string,
   session: DevinSession,
   reused: boolean,
+  maxAcuLimit: number,
 ): RunStatus {
   const devin: DevinRunStatus = {
     sessionId: session.sessionId,
@@ -664,6 +673,8 @@ export function createRunningStatus(
     ...(session.statusDetail === undefined
       ? {}
       : { statusDetail: session.statusDetail }),
+    maxAcuLimit,
+    acusConsumed: session.acusConsumed,
     reused,
     timedOut: false,
     startedAt: session.createdAt,
@@ -701,6 +712,7 @@ export function createObservedStatus(
       ...status.devin,
       apiStatus: session.status,
       statusDetail: session.statusDetail,
+      acusConsumed: session.acusConsumed,
       elapsedMilliseconds,
     },
   };
@@ -775,6 +787,7 @@ export function createCompletedStatus(
       ...(completion.pullRequestUrl === undefined
         ? {}
         : { draftPullRequestUrl: completion.pullRequestUrl }),
+      acusConsumed: result.session.acusConsumed,
       timedOut: result.timedOut,
       completedAt,
       elapsedMilliseconds,
@@ -832,13 +845,14 @@ export function renderDevinSummary(status: RunStatus): string {
     "",
     `- State: \`${status.state}\``,
     `- Issue: ${status.issueUrl ?? "unavailable"}`,
-    `- Selected: ${status.progress.selected}`,
-    `- Active: ${status.progress.active}`,
-    `- Completed: ${status.progress.completed}`,
-    `- Succeeded: ${status.progress.succeeded}`,
-    `- Failed: ${status.progress.failed}`,
-    `- Success rate: ${successRate}`,
-    `- Completed findings/hour: ${formatMetric(status.progress.completedPerHour)}`,
+    `- Findings in batch: ${status.batchSize}`,
+    `- Batches selected: ${status.progress.selected}`,
+    `- Batches active: ${status.progress.active}`,
+    `- Batches completed: ${status.progress.completed}`,
+    `- Batches with a verified draft PR: ${status.progress.succeeded}`,
+    `- Failed batches: ${status.progress.failed}`,
+    `- Draft-PR production rate: ${successRate}`,
+    `- Completed batches/hour: ${formatMetric(status.progress.completedPerHour)}`,
     `- Remediation elapsed milliseconds: ${status.devin?.elapsedMilliseconds ?? 0}`,
   ];
   if (status.failure !== undefined) {
@@ -849,6 +863,8 @@ export function renderDevinSummary(status: RunStatus): string {
       `- Devin session: [${status.devin.sessionId}](${status.devin.sessionUrl})`,
       `- Devin API status: \`${status.devin.apiStatus}\``,
       `- Session reused: ${status.devin.reused ? "yes" : "no"}`,
+      `- Per-session ACU cap: ${status.devin.maxAcuLimit}`,
+      `- ACUs consumed: ${formatMetric(status.devin.acusConsumed)}`,
       `- Elapsed milliseconds: ${status.devin.elapsedMilliseconds}`,
     );
     if (status.devin.statusDetail !== undefined) {
@@ -955,7 +971,12 @@ function readRunStatus(reportsDirectory: string): RunStatus {
 
 function readActionableBatch(reportsDirectory: string): ActionableBatch {
   const value = readJson(path.join(reportsDirectory, "actionable-batch.json"));
-  if (!isRecord(value) || !Array.isArray(value.findings)) {
+  if (
+    !isRecord(value) ||
+    (value.selectedBatch !== null &&
+      (!isRecord(value.selectedBatch) ||
+        !Array.isArray(value.selectedBatch.findings)))
+  ) {
     throw new Error("Invalid actionable batch artifact");
   }
   return value as unknown as ActionableBatch;
@@ -1039,7 +1060,11 @@ async function publishIssueUpdate(
 async function startWorkflow(inputs: WorkflowInputs): Promise<RunStatus> {
   const status = readRunStatus(inputs.reportsDirectory);
   const batch = readActionableBatch(inputs.reportsDirectory);
-  if (status.state !== "awaiting-approval" || batch.findings.length === 0) {
+  if (
+    status.state !== "awaiting-approval" ||
+    batch.selectedBatch === null ||
+    batch.selectedBatch.findings.length === 0
+  ) {
     throw new Error("Devin can start only for an approved actionable batch");
   }
   const client = new DevinApiClient({
@@ -1075,6 +1100,7 @@ async function startWorkflow(inputs: WorkflowInputs): Promise<RunStatus> {
       inputs.issueUrl,
       result.session,
       result.reused,
+      inputs.maxAcuLimit,
     );
     writeDevinArtifacts(inputs.reportsDirectory, runningStatus);
     writeOutput("state", runningStatus.state);

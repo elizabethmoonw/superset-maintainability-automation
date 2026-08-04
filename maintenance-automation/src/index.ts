@@ -24,6 +24,7 @@ export {
   NormalizedFinding,
 } from "./parseKnipReport";
 export {
+  BATCH_TARGET_FINDINGS,
   EVIDENCE_NOTICE,
   MAX_ACTIONABLE_FINDINGS,
   calculateDigest,
@@ -36,15 +37,29 @@ export {
 export type {
   ActionableBatch,
   ActionableBatchFinding,
+  BatchSelectionOptions,
+  CandidateGroup,
   GeneratedRunArtifacts,
+  FindingInventory,
   DevinRunStatus,
   MaintenanceRunState,
   RunContext,
   RunStatus,
   ScanCount,
   ScanCounts,
+  SelectedBatch,
   TaskProgress,
 } from "./generateActionableBatch";
+export {
+  createEmptyBatchLedger,
+  parseBatchLedger,
+  serializeBatchLedger,
+} from "./batchLedger";
+export type {
+  BatchAttempt,
+  BatchAttemptOutcome,
+  BatchLedger,
+} from "./batchLedger";
 export {
   DEFAULT_MAX_ACU_LIMIT,
   DEFAULT_POLL_INTERVAL_MS,
