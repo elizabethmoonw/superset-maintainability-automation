@@ -454,6 +454,33 @@ test("crash recovery reuses one matching tagged session with its original time",
   );
 });
 
+test("recovery accepts an API-returned session ID without a devin prefix", async () => {
+  const fetchMock = jest
+    .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+    .mockResolvedValue(
+      sessionPageResponse([
+        sessionBody("running", [], {
+          session_id: "legacy-session-1",
+          tags: [RECOVERY_SEARCH.tag],
+        }),
+      ]),
+    );
+  const client = new DevinApiClient(
+    { apiKey: "token", organizationId: "org-example" },
+    fetchMock,
+  );
+
+  const result = await startOrReuseSession(
+    client,
+    CREATE_REQUEST,
+    RECOVERY_SEARCH,
+  );
+
+  expect(result.reused).toBe(true);
+  expect(result.session.sessionId).toBe("legacy-session-1");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 test("recovery follows documented pagination before creating one tagged session", async () => {
   const fetchMock = jest
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()

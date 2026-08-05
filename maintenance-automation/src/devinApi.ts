@@ -373,13 +373,19 @@ function isStatusDetail(value: unknown): value is DevinStatusDetail {
   );
 }
 
+function isSessionId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    !/[\u0000-\u001F\u007F]/.test(value)
+  );
+}
+
 function getSessionResponseViolation(
   value: Record<string, unknown>,
 ): string | undefined {
-  if (
-    typeof value.session_id !== "string" ||
-    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id)
-  ) {
+  if (!isSessionId(value.session_id)) {
     return "session_id";
   }
   if (!isHttpsUrl(value.url)) return "url";
@@ -468,8 +474,7 @@ function parseCreatedSessionResponse(
 ): DevinSession {
   if (
     !isRecord(value) ||
-    typeof value.session_id !== "string" ||
-    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id) ||
+    !isSessionId(value.session_id) ||
     !isHttpsUrl(value.url) ||
     !isApiStatus(value.status)
   ) {
