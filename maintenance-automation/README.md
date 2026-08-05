@@ -86,8 +86,8 @@ The canonical path is the GitHub Actions workflow. It uses live repository state
 
 1. Fork this repository and enable GitHub Actions.
 2. Add two repository secrets:
-   - `DEVIN_API_KEY`: service-user API key generated in Devin for this automation.
-   - `DEVIN_ORG_ID`: organization ID shown on Devin's **Settings → Service Users** page.
+   - `DEVIN_API_KEY`: Devin v3 service-user API key beginning with `cog_`. Paste the value without quotes or surrounding whitespace.
+   - `DEVIN_ORG_ID`: Devin organization ID beginning with `org-`, shown on **Settings → Service Users**.
 3. Create a GitHub environment named `maintenance-approval` and assign at least one required reviewer.
 4. Enable GitHub Pages and select **GitHub Actions** as its source.
 5. Optional: set `DEVIN_MAX_ACU_LIMIT`. The workflow defaults to `50` ACUs per approved session.
