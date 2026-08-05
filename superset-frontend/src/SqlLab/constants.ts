@@ -55,16 +55,6 @@ export const STATUS_OPTIONS_LOCALIZED = {
   pending: t('pending'),
 };
 
-export const TIME_OPTIONS = [
-  'now',
-  '1 hour ago',
-  '1 day ago',
-  '7 days ago',
-  '28 days ago',
-  '90 days ago',
-  '1 year ago',
-];
-
 // SqlEditor layout constants
 export const SQL_EDITOR_GUTTER_HEIGHT = 5;
 export const SQL_EDITOR_LEFTBAR_WIDTH = 400;
@@ -74,7 +64,6 @@ export const SQL_EDITOR_STATUSBAR_HEIGHT = 30;
 export const INITIAL_NORTH_PERCENT = 30;
 export const SET_QUERY_EDITOR_SQL_DEBOUNCE_MS = 2000;
 export const VALIDATION_DEBOUNCE_MS = 600;
-export const WINDOW_RESIZE_THROTTLE_MS = 100;
 
 // kilobyte storage
 export const KB_STORAGE = 1024;
