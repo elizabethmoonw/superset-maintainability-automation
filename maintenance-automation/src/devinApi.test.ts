@@ -210,10 +210,20 @@ const RECOVERY_SEARCH = {
   createdAfterSeconds: 1_700_000_000,
 };
 
-test("create session uses only documented v3 request fields", async () => {
+test("create session accepts an acknowledgement then fetches its full record", async () => {
   const fetchMock = jest
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
-    .mockResolvedValue(sessionResponse("new"));
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          session_id: "devin-session-1",
+          url: "https://app.devin.ai/sessions/devin-session-1",
+          status: "new",
+        }),
+        { status: 200 },
+      ),
+    )
+    .mockResolvedValueOnce(sessionResponse("new"));
   const client = new DevinApiClient(
     {
       apiKey: "secret-token",
@@ -222,9 +232,9 @@ test("create session uses only documented v3 request fields", async () => {
     fetchMock,
   );
 
-  await client.createSession(CREATE_REQUEST);
+  const session = await client.createSession(CREATE_REQUEST);
 
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
   const [url, request] = fetchMock.mock.calls[0];
   expect(url).toBe(
     "https://api.devin.ai/v3/organizations/org-example/sessions",
@@ -248,6 +258,13 @@ test("create session uses only documented v3 request fields", async () => {
     tags: ["maintenance-recovery"],
   });
   expect(request?.headers).not.toHaveProperty("Idempotency-Key");
+  expect(fetchMock.mock.calls[1][0]).toBe(
+    "https://api.devin.ai/v3/organizations/org-example/sessions/devin-session-1",
+  );
+  expect(fetchMock.mock.calls[1][1]).toEqual(
+    expect.objectContaining({ method: "GET" }),
+  );
+  expect(session.sessionId).toBe("devin-session-1");
 });
 
 test("v3 response accepts nullable PR state and user usage suspension detail", async () => {
@@ -447,6 +464,11 @@ test("recovery follows documented pagination before creating one tagged session"
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
     .mockResolvedValueOnce(sessionPageResponse([], "next-page"))
     .mockResolvedValueOnce(sessionPageResponse([]))
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ session_id: "devin-session-1" }), {
+        status: 200,
+      }),
+    )
     .mockResolvedValueOnce(sessionResponse("new"));
   const client = new DevinApiClient(
     { apiKey: "token", organizationId: "org-example" },

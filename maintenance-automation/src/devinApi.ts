@@ -209,10 +209,11 @@ export class DevinApiClient {
       structured_output_required: false,
       tags: request.tags,
     };
-    return this.requestSession("", {
+    const creationResponse = await this.request("", {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return this.getSession(parseCreatedSessionId(creationResponse));
   }
 
   async getSession(sessionId: string): Promise<DevinSession> {
@@ -430,6 +431,19 @@ function parseSessionResponse(value: unknown): DevinSession {
       : { statusDetail: response.status_detail }),
     pullRequests,
   };
+}
+
+function parseCreatedSessionId(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    typeof value.session_id !== "string" ||
+    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id)
+  ) {
+    throw new DevinApiError(
+      "Devin API returned an invalid session creation response",
+    );
+  }
+  return value.session_id;
 }
 
 function renderFinding(finding: ActionableBatchFinding): string {
