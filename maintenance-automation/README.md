@@ -85,7 +85,7 @@ The canonical path is the GitHub Actions workflow. It uses live repository state
 ### One-time setup
 
 1. Fork this repository and enable GitHub Actions.
-2. Add two repository secrets:
+2. Under **Settings → Environments → maintenance-approval**, add two environment secrets. Environment secrets override repository secrets with the same name, so keep a single copy of each credential:
    - `DEVIN_API_KEY`: Devin v3 service-user API key beginning with `cog_`. Paste the value without quotes or surrounding whitespace.
    - `DEVIN_ORG_ID`: Devin organization ID beginning with `org-`, shown on **Settings → Service Users**.
 3. Create a GitHub environment named `maintenance-approval` and assign at least one required reviewer.
