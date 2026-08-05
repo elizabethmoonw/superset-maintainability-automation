@@ -17,10 +17,9 @@
  * under the License.
  */
 import { styled } from '@apache-superset/core/theme';
-import { FormItem } from '@superset-ui/core/components';
 import { PluginFilterStylesProps } from './types';
 
-export const RESPONSIVE_WIDTH = 0;
+const RESPONSIVE_WIDTH = 0;
 
 export const FilterPluginStyle = styled.div<PluginFilterStylesProps>`
   min-height: ${({ height }) => height}px;
@@ -32,12 +31,6 @@ export const FilterPluginStyle = styled.div<PluginFilterStylesProps>`
   /* theme or css-in-js override). 'start' is the CSS default, so this is a */
   /* no-op unless a centered value is inherited, and it is RTL-safe. */
   text-align: start;
-`;
-
-export const StyledFormItem = styled(FormItem)`
-  &.ant-row.ant-form-item {
-    margin: 0;
-  }
 `;
 
 export const StatusMessage = styled.div<{

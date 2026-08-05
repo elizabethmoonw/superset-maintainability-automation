@@ -289,7 +289,7 @@ function TabbedSqlEditors({
   );
 }
 
-export function mapStateToProps({ sqlLab, common }: SqlLabRootState) {
+function mapStateToProps({ sqlLab, common }: SqlLabRootState) {
   return {
     queryEditors: sqlLab.queryEditors ?? DEFAULT_PROPS.queryEditors,
     queries: sqlLab.queries,
