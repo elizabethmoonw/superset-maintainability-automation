@@ -103,6 +103,7 @@ export interface DevinApiClientOptions {
 
 export interface PersistedSessionReference {
   batchDigest: string;
+  runId: string;
   sessionId: string;
   sessionUrl: string;
 }
@@ -550,9 +551,10 @@ export function createSessionRecoveryTag(
   repository: string,
   commitSha: string,
   batchDigest: string,
+  runId: string,
 ): string {
   const digest = createHash("sha256")
-    .update(`${repository}\u0000${commitSha}\u0000${batchDigest}`)
+    .update(`${repository}\u0000${commitSha}\u0000${batchDigest}\u0000${runId}`)
     .digest("hex");
   return `maintenance-${digest.slice(0, 40)}`;
 }
@@ -704,6 +706,7 @@ export function renderPersistedSessionMarker(
 export function extractPersistedSessionReference(
   issueBody: string,
   batchDigest: string,
+  runId: string,
 ): PersistedSessionReference | undefined {
   const matches = [...issueBody.matchAll(SESSION_MARKER_PATTERN)].reverse();
   for (const match of matches) {
@@ -714,11 +717,13 @@ export function extractPersistedSessionReference(
       if (
         isRecord(parsed) &&
         parsed.batchDigest === batchDigest &&
+        parsed.runId === runId &&
         typeof parsed.sessionId === "string" &&
         typeof parsed.sessionUrl === "string"
       ) {
         return {
           batchDigest,
+          runId,
           sessionId: parsed.sessionId,
           sessionUrl: parsed.sessionUrl,
         };
@@ -988,6 +993,7 @@ export function writeDevinArtifacts(
       ? ""
       : `\n\n${renderPersistedSessionMarker({
           batchDigest: status.batchDigest,
+          runId: status.runId,
           sessionId: status.devin.sessionId,
           sessionUrl: status.devin.sessionUrl,
         })}`;
@@ -1174,6 +1180,7 @@ async function startWorkflow(inputs: WorkflowInputs): Promise<RunStatus> {
     status.repository,
     status.commitSha,
     status.batchDigest,
+    status.runId,
   );
   try {
     const result = await startOrReuseSession(

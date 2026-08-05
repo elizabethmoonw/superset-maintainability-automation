@@ -307,6 +307,7 @@ jobs:
               const session = extractPersistedSessionReference(
                 existing.body ?? '',
                 status.batchDigest,
+                status.runId,
               );
               const updatedBody = session
                 ? `${body.trimEnd()}\n\n${renderPersistedSessionMarker(session)}\n`

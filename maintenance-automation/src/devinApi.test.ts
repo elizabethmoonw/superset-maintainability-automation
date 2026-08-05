@@ -413,11 +413,12 @@ test("persisted session must carry the approved recovery tag", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-test("stable recovery tag is scoped to repository, commit, and approved batch", () => {
+test("stable recovery tag is scoped to one workflow run", () => {
   const tag = createSessionRecoveryTag(
     "example/superset",
     "approved-commit",
     "batch-digest",
+    "workflow-run-1",
   );
 
   expect(tag).toMatch(/^maintenance-[a-f0-9]{40}$/);
@@ -426,13 +427,23 @@ test("stable recovery tag is scoped to repository, commit, and approved batch", 
       "example/superset",
       "approved-commit",
       "batch-digest",
+      "workflow-run-1",
     ),
   ).toBe(tag);
+  expect(
+    createSessionRecoveryTag(
+      "different/superset",
+      "approved-commit",
+      "batch-digest",
+      "workflow-run-1",
+    ),
+  ).not.toBe(tag);
   expect(
     createSessionRecoveryTag(
       "example/superset",
       "different-commit",
       "batch-digest",
+      "workflow-run-1",
     ),
   ).not.toBe(tag);
   expect(
@@ -440,6 +451,15 @@ test("stable recovery tag is scoped to repository, commit, and approved batch", 
       "example/superset",
       "approved-commit",
       "other-batch",
+      "workflow-run-1",
+    ),
+  ).not.toBe(tag);
+  expect(
+    createSessionRecoveryTag(
+      "example/superset",
+      "approved-commit",
+      "batch-digest",
+      "workflow-run-2",
     ),
   ).not.toBe(tag);
 });
@@ -968,18 +988,50 @@ test("observed status exposes API transitions without completing the run", () =>
   expect(observed.progress.completed).toBe(0);
 });
 
-test("session marker round-trips only for its approved batch", () => {
+test("session marker round-trips only for its approved batch and workflow run", () => {
   const reference: PersistedSessionReference = {
     batchDigest: "batch-digest",
+    runId: "workflow-run-1",
     sessionId: "devin-session-1",
     sessionUrl: "https://app.devin.ai/sessions/devin-session-1",
   };
   const issueBody = `${renderPersistedSessionMarker(reference)}\nissue body`;
 
-  expect(extractPersistedSessionReference(issueBody, "batch-digest")).toEqual(
-    reference,
-  );
   expect(
-    extractPersistedSessionReference(issueBody, "different-batch"),
+    extractPersistedSessionReference(
+      issueBody,
+      "batch-digest",
+      "workflow-run-1",
+    ),
+  ).toEqual(reference);
+  expect(
+    extractPersistedSessionReference(
+      issueBody,
+      "different-batch",
+      "workflow-run-1",
+    ),
+  ).toBeUndefined();
+  expect(
+    extractPersistedSessionReference(
+      issueBody,
+      "batch-digest",
+      "workflow-run-2",
+    ),
+  ).toBeUndefined();
+
+  const legacyReference = {
+    batchDigest: reference.batchDigest,
+    sessionId: reference.sessionId,
+    sessionUrl: reference.sessionUrl,
+  };
+  const legacyMarker = `<!-- maintenance-devin:${Buffer.from(
+    JSON.stringify(legacyReference),
+  ).toString("base64url")} -->`;
+  expect(
+    extractPersistedSessionReference(
+      legacyMarker,
+      "batch-digest",
+      "workflow-run-1",
+    ),
   ).toBeUndefined();
 });
