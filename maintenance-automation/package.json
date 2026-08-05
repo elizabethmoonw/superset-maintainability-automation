@@ -15,6 +15,7 @@
     "scan:both": "npm run build && node dist/cli.js production && node dist/cli.js productionPlusTests",
     "batch:generate": "node dist/generateActionableBatch.js",
     "workflow:prepare": "npm run scan:both && npm run batch:generate",
+    "workflow:dispatch": "node dist/dispatchWorkflow.js",
     "devin:start": "node dist/devinApi.js start",
     "devin:poll": "node dist/devinApi.js poll",
     "compare": "npm run build && node dist/cli.js compare",

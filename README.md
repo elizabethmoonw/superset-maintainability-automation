@@ -19,6 +19,8 @@ under the License.
 
 # Superset
 
+> **Devin maintenance automation project:** This fork adds an approval-gated workflow that turns static-analysis evidence into bounded Devin sessions and reviewable draft pull requests. [Read the project README](maintenance-automation/README.md) or [open the live dashboard](https://elizabethmoonw.github.io/superset-maintainability-automation/).
+
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/license/apache-2-0)
 [![Latest Release on Github](https://img.shields.io/github/v/release/apache/superset?sort=semver)](https://github.com/apache/superset/releases/latest)
 [![Build Status](https://github.com/apache/superset/actions/workflows/superset-python-unittest.yml/badge.svg)](https://github.com/apache/superset/actions)
