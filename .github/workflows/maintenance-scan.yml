@@ -543,6 +543,7 @@ jobs:
             const path = require('path');
             const {
               createFailedStatus,
+              validateDevinPullRequestBody,
               writeDevinArtifacts,
             } = require('./maintenance-automation/dist/devinApi.js');
             const reportsDirectory = path.resolve('approved-reports');
@@ -602,16 +603,7 @@ jobs:
                 if (!body.includes(status.workflowUrl)) {
                   throw new Error('Devin pull request does not link the source workflow');
                 }
-                const requiredSections = [
-                  ['scan evidence', /scan evidence/i],
-                  ['tests run', /tests run/i],
-                  ['unresolved findings', /unresolved findings/i],
-                ];
-                for (const [name, pattern] of requiredSections) {
-                  if (!pattern.test(body)) {
-                    throw new Error(`Devin pull request is missing ${name}`);
-                  }
-                }
+                validateDevinPullRequestBody(body);
                 const comparison = await github.rest.repos.compareCommitsWithBasehead({
                   owner,
                   repo,

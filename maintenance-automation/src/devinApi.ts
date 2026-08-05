@@ -44,6 +44,11 @@ const RECOVERY_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_PAGE_SIZE = 200;
 const MAX_RECOVERY_PAGES = 5;
 const SESSION_MARKER_PATTERN = /<!-- maintenance-devin:([A-Za-z0-9_-]+) -->/g;
+const REQUIRED_PULL_REQUEST_SECTIONS = [
+  "SCAN EVIDENCE",
+  "TESTING INSTRUCTIONS",
+  "UNRESOLVED FINDINGS",
+] as const;
 
 export type DevinApiStatus =
   "new" | "claimed" | "running" | "exit" | "error" | "suspended" | "resuming";
@@ -524,9 +529,21 @@ export function buildDevinPrompt(
     "2. Investigate usages, dynamic imports, registrations, plugins, feature flags, and public API implications for every finding.",
     "3. Make only verified, focused maintenance changes and run relevant tests, type checks, or lint checks.",
     `4. Create one draft pull request that references ${issueUrl}. Do not mark it ready for review and never merge it.`,
-    `5. In the pull request description, list the scan evidence considered, tests run, unresolved findings, and source workflow ${status.workflowUrl}.`,
+    `5. Follow .github/PULL_REQUEST_TEMPLATE.md. Include the exact headings ${REQUIRED_PULL_REQUEST_SECTIONS.map((heading) => `\`### ${heading}\``).join(", ")}. Under them, record the evidence considered, commands and results, unresolved findings, and source workflow ${status.workflowUrl}.`,
     "6. If no finding is safe to change, explain why in the issue-linked draft pull request without making speculative deletions.",
   ].join("\n");
+}
+
+export function validateDevinPullRequestBody(body: string): void {
+  for (const heading of REQUIRED_PULL_REQUEST_SECTIONS) {
+    const headingPattern = new RegExp(
+      `^#{1,6}\\s+${heading.replace(" ", "\\s+")}\\s*$`,
+      "im",
+    );
+    if (!headingPattern.test(body)) {
+      throw new Error(`Devin pull request is missing ${heading}`);
+    }
+  }
 }
 
 export function createSessionRecoveryTag(

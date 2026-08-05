@@ -30,6 +30,7 @@ import {
   renderDevinSummary,
   renderPersistedSessionMarker,
   startOrReuseSession,
+  validateDevinPullRequestBody,
   type DevinSession,
   type PersistedSessionReference,
 } from "./devinApi";
@@ -340,7 +341,30 @@ test("prompt fixes the approved SHA and requires investigation, a linked draft P
   expect(prompt).toContain("src/unused.ts (unusedExport)");
   expect(prompt).toContain("Create one draft pull request");
   expect(prompt).toContain("never merge it");
-  expect(prompt).toContain("tests run, unresolved findings");
+  expect(prompt).toContain(".github/PULL_REQUEST_TEMPLATE.md");
+  expect(prompt).toContain("`### SCAN EVIDENCE`");
+  expect(prompt).toContain("`### TESTING INSTRUCTIONS`");
+  expect(prompt).toContain("`### UNRESOLVED FINDINGS`");
+});
+
+test("pull request validation requires the canonical automation headings", () => {
+  const validBody = [
+    "### SUMMARY",
+    "Changes made.",
+    "### SCAN EVIDENCE",
+    "Evidence reviewed.",
+    "### TESTING INSTRUCTIONS",
+    "npm test passed.",
+    "### UNRESOLVED FINDINGS",
+    "None.",
+  ].join("\n");
+
+  expect(() => validateDevinPullRequestBody(validBody)).not.toThrow();
+  expect(() =>
+    validateDevinPullRequestBody(
+      validBody.replace("### TESTING INSTRUCTIONS", "Tests run: npm test"),
+    ),
+  ).toThrow("Devin pull request is missing TESTING INSTRUCTIONS");
 });
 
 test("persisted session is retrieved instead of creating another session", async () => {
