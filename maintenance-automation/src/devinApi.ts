@@ -213,7 +213,7 @@ export class DevinApiClient {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return this.getSession(parseCreatedSessionId(creationResponse));
+    return parseCreatedSessionResponse(creationResponse, request, new Date());
   }
 
   async getSession(sessionId: string): Promise<DevinSession> {
@@ -373,24 +373,52 @@ function isStatusDetail(value: unknown): value is DevinStatusDetail {
   );
 }
 
-function parseSessionResponse(value: unknown): DevinSession {
+function getSessionResponseViolation(
+  value: Record<string, unknown>,
+): string | undefined {
   if (
-    !isRecord(value) ||
     typeof value.session_id !== "string" ||
-    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id) ||
-    !isHttpsUrl(value.url) ||
-    !isApiStatus(value.status) ||
+    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id)
+  ) {
+    return "session_id";
+  }
+  if (!isHttpsUrl(value.url)) return "url";
+  if (!isApiStatus(value.status)) return "status";
+  if (
     typeof value.created_at !== "number" ||
     !Number.isSafeInteger(value.created_at) ||
-    value.created_at < 0 ||
+    value.created_at < 0
+  ) {
+    return "created_at";
+  }
+  if (
     typeof value.acus_consumed !== "number" ||
     !Number.isFinite(value.acus_consumed) ||
-    value.acus_consumed < 0 ||
-    !Array.isArray(value.tags) ||
-    !value.tags.every((tag: unknown) => typeof tag === "string") ||
-    !Array.isArray(value.pull_requests)
+    value.acus_consumed < 0
   ) {
-    throw new DevinApiError("Devin API returned an invalid session response");
+    return "acus_consumed";
+  }
+  if (
+    !Array.isArray(value.tags) ||
+    !value.tags.every((tag: unknown) => typeof tag === "string")
+  ) {
+    return "tags";
+  }
+  if (!Array.isArray(value.pull_requests)) return "pull_requests";
+  return undefined;
+}
+
+function parseSessionResponse(value: unknown): DevinSession {
+  if (!isRecord(value)) {
+    throw new DevinApiError(
+      "Devin API returned an invalid session response field: payload",
+    );
+  }
+  const violation = getSessionResponseViolation(value);
+  if (violation !== undefined) {
+    throw new DevinApiError(
+      `Devin API returned an invalid session response field: ${violation}`,
+    );
   }
   if (
     value.status_detail !== undefined &&
@@ -400,7 +428,8 @@ function parseSessionResponse(value: unknown): DevinSession {
     throw new DevinApiError("Devin API returned an unknown status detail");
   }
 
-  const pullRequests = value.pull_requests.map((pullRequest: unknown) => {
+  const response = value as unknown as DevinSessionResponse;
+  const pullRequests = response.pull_requests.map((pullRequest: unknown) => {
     if (
       !isRecord(pullRequest) ||
       (pullRequest.pr_state !== null &&
@@ -414,7 +443,6 @@ function parseSessionResponse(value: unknown): DevinSession {
     return { state: pullRequest.pr_state, url: pullRequest.pr_url };
   });
 
-  const response = value as unknown as DevinSessionResponse;
   const createdAt = new Date(response.created_at * 1000);
   if (Number.isNaN(createdAt.valueOf())) {
     throw new DevinApiError("Devin API returned an invalid creation time");
@@ -433,17 +461,31 @@ function parseSessionResponse(value: unknown): DevinSession {
   };
 }
 
-function parseCreatedSessionId(value: unknown): string {
+function parseCreatedSessionResponse(
+  value: unknown,
+  request: CreateDevinSessionRequest,
+  createdAt: Date,
+): DevinSession {
   if (
     !isRecord(value) ||
     typeof value.session_id !== "string" ||
-    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id)
+    !/^devin-[A-Za-z0-9_-]+$/.test(value.session_id) ||
+    !isHttpsUrl(value.url) ||
+    !isApiStatus(value.status)
   ) {
     throw new DevinApiError(
       "Devin API returned an invalid session creation response",
     );
   }
-  return value.session_id;
+  return {
+    sessionId: value.session_id,
+    url: value.url,
+    status: value.status,
+    acusConsumed: 0,
+    createdAt: createdAt.toISOString(),
+    tags: [...request.tags],
+    pullRequests: [],
+  };
 }
 
 function renderFinding(finding: ActionableBatchFinding): string {

@@ -210,7 +210,7 @@ const RECOVERY_SEARCH = {
   createdAfterSeconds: 1_700_000_000,
 };
 
-test("create session accepts an acknowledgement then fetches its full record", async () => {
+test("create session accepts the documented acknowledgement", async () => {
   const fetchMock = jest
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
     .mockResolvedValueOnce(
@@ -222,8 +222,7 @@ test("create session accepts an acknowledgement then fetches its full record", a
         }),
         { status: 200 },
       ),
-    )
-    .mockResolvedValueOnce(sessionResponse("new"));
+    );
   const client = new DevinApiClient(
     {
       apiKey: "secret-token",
@@ -234,7 +233,7 @@ test("create session accepts an acknowledgement then fetches its full record", a
 
   const session = await client.createSession(CREATE_REQUEST);
 
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   const [url, request] = fetchMock.mock.calls[0];
   expect(url).toBe(
     "https://api.devin.ai/v3/organizations/org-example/sessions",
@@ -258,13 +257,9 @@ test("create session accepts an acknowledgement then fetches its full record", a
     tags: ["maintenance-recovery"],
   });
   expect(request?.headers).not.toHaveProperty("Idempotency-Key");
-  expect(fetchMock.mock.calls[1][0]).toBe(
-    "https://api.devin.ai/v3/organizations/org-example/sessions/devin-session-1",
-  );
-  expect(fetchMock.mock.calls[1][1]).toEqual(
-    expect.objectContaining({ method: "GET" }),
-  );
   expect(session.sessionId).toBe("devin-session-1");
+  expect(session.acusConsumed).toBe(0);
+  expect(session.tags).toEqual(["maintenance-recovery"]);
 });
 
 test("v3 response accepts nullable PR state and user usage suspension detail", async () => {
@@ -465,11 +460,15 @@ test("recovery follows documented pagination before creating one tagged session"
     .mockResolvedValueOnce(sessionPageResponse([], "next-page"))
     .mockResolvedValueOnce(sessionPageResponse([]))
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ session_id: "devin-session-1" }), {
-        status: 200,
-      }),
-    )
-    .mockResolvedValueOnce(sessionResponse("new"));
+      new Response(
+        JSON.stringify({
+          session_id: "devin-session-1",
+          url: "https://app.devin.ai/sessions/devin-session-1",
+          status: "new",
+        }),
+        { status: 200 },
+      ),
+    );
   const client = new DevinApiClient(
     { apiKey: "token", organizationId: "org-example" },
     fetchMock,
@@ -553,6 +552,57 @@ test("polling stops at documented exit status and captures the pull request", as
   expect(onStatusChange).toHaveBeenCalledWith(
     expect.objectContaining({ status: "exit", statusDetail: "finished" }),
   );
+});
+
+test("creation acknowledgement flows through polling to a pull request", async () => {
+  const fetchMock = jest
+    .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+    .mockResolvedValueOnce(sessionPageResponse([]))
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          session_id: "devin-session-1",
+          url: "https://app.devin.ai/sessions/devin-session-1",
+          status: "new",
+        }),
+        { status: 200 },
+      ),
+    )
+    .mockResolvedValueOnce(sessionResponse("running"))
+    .mockResolvedValueOnce(
+      sessionResponse("exit", [
+        {
+          pr_state: "open",
+          pr_url: "https://github.com/example/superset/pull/9",
+        },
+      ]),
+    );
+  const client = new DevinApiClient(
+    { apiKey: "token", organizationId: "org-example" },
+    fetchMock,
+  );
+
+  const started = await startOrReuseSession(
+    client,
+    CREATE_REQUEST,
+    RECOVERY_SEARCH,
+  );
+  const result = await pollDevinSession(client, started.session.sessionId, {
+    timeoutMilliseconds: 100,
+    intervalMilliseconds: 10,
+    initialSession: started.session,
+    now: jest.fn().mockReturnValue(0),
+    sleep: async () => undefined,
+  });
+
+  expect(started.reused).toBe(false);
+  expect(started.session.status).toBe("new");
+  expect(result.timedOut).toBe(false);
+  expect(result.session.status).toBe("exit");
+  expect(result.session.pullRequests[0].url).toBe(
+    "https://github.com/example/superset/pull/9",
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(4);
 });
 
 test("polling terminates the session at the configured timeout", async () => {
