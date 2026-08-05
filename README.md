@@ -17,245 +17,253 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-# Superset
+# Devin maintenance automation for Apache Superset
 
-> **Devin maintenance automation project:** This fork adds an approval-gated workflow that turns static-analysis evidence into bounded Devin sessions and reviewable draft pull requests. [Read the project README](maintenance-automation/README.md) or [open the live dashboard](https://elizabethmoonw.github.io/superset-maintainability-automation/).
+[![Maintenance scan](https://github.com/elizabethmoonw/superset-maintainability-automation/actions/workflows/maintenance-scan.yml/badge.svg)](https://github.com/elizabethmoonw/superset-maintainability-automation/actions/workflows/maintenance-scan.yml)
+[![Live dashboard](https://img.shields.io/badge/observability-live_dashboard-6f42c1)](https://elizabethmoonw.github.io/superset-maintainability-automation/)
+[![Devin API](https://img.shields.io/badge/Devin-API-0b7285)](https://docs.devin.ai/api-reference/overview)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/license/apache-2-0)
-[![Latest Release on Github](https://img.shields.io/github/v/release/apache/superset?sort=semver)](https://github.com/apache/superset/releases/latest)
-[![Build Status](https://github.com/apache/superset/actions/workflows/superset-python-unittest.yml/badge.svg)](https://github.com/apache/superset/actions)
-[![PyPI version](https://badge.fury.io/py/apache_superset.svg)](https://badge.fury.io/py/apache_superset)
-[![PyPI](https://img.shields.io/pypi/pyversions/apache_superset.svg?maxAge=2592000)](https://pypi.python.org/pypi/apache_superset)
-[![GitHub Stars](https://img.shields.io/github/stars/apache/superset?style=social)](https://github.com/apache/superset/stargazers)
-[![Contributors](https://img.shields.io/github/contributors/apache/superset)](https://github.com/apache/superset/graphs/contributors)
-[![Last Commit](https://img.shields.io/github/last-commit/apache/superset)](https://github.com/apache/superset/commits/master)
-[![Open Issues](https://img.shields.io/github/issues/apache/superset)](https://github.com/apache/superset/issues)
-[![Open PRs](https://img.shields.io/github/issues-pr/apache/superset)](https://github.com/apache/superset/pulls)
-[![Get on Slack](https://img.shields.io/badge/slack-join-orange.svg)](https://bit.ly/join-superset-slack)
-[![Documentation](https://img.shields.io/badge/docs-apache.org-blue.svg)](https://superset.apache.org)
+[Knip](https://knip.dev/) traverses the TypeScript import and export graph to find unused-code candidates. This proof of concept turns those candidates into bounded maintenance work: a deterministic control plane scans and batches them, Devin investigates the surrounding code and produces a tested draft pull request, and a human decides whether to merge it.
 
-<picture width="500">
-  <source
-    width="600"
-    media="(prefers-color-scheme: dark)"
-    src="https://superset.apache.org/img/superset-logo-horiz-dark.svg"
-    alt="Superset logo (dark)"
-  />
-  <img
-    width="600"
-    src="https://superset.apache.org/img/superset-logo-horiz-apache.svg"
-    alt="Superset logo (light)"
-  />
-</picture>
+**[View the dashboard](https://elizabethmoonw.github.io/superset-maintainability-automation/)** · **[Run the workflow](https://github.com/elizabethmoonw/superset-maintainability-automation/actions/workflows/maintenance-scan.yml)** · **[Read the architecture](#how-it-works)** · **[Review the metric semantics](#observability-what-the-numbers-mean)**
 
-A modern, enterprise-ready business intelligence web application.
+> **Implementation status:** The scanner, batching, approval boundary, Devin API client, pull-request validation, Docker dispatcher, tests, historical backfill, and dashboard are implemented. The corrected scanner and metrics pipeline have been exercised locally. Before final submission, this repository still needs a recorded end-to-end run in which Devin produces a draft remediation PR from the corrected evidence model.
 
-### Documentation
+## How it works
 
-- **[User Guide](https://superset.apache.org/user-docs/)** — For analysts and business users. Explore data, build charts, create dashboards, and connect databases.
-- **[Administrator Guide](https://superset.apache.org/admin-docs/)** — Install, configure, and operate Superset. Covers security, scaling, and database drivers.
-- **[Developer Guide](https://superset.apache.org/developer-docs/)** — Contribute to Superset or build on its REST API and extension framework.
+```mermaid
+flowchart LR
+    A["Manual GitHub Actions event"] --> B["Scan exact commit twice"]
+    B --> C["Intersect scanner evidence"]
+    C --> D["Exclude type-only diagnostics"]
+    D --> E["Select a file-coherent batch"]
+    E --> F["Create or update evidence issue"]
+    F --> G{"Protected-environment approval"}
+    G -->|Approved| H["Start and poll Devin"]
+    G -->|Not approved| I["Stop without remediation"]
+    H --> J["Verify draft PR contract"]
+    J --> K["Human and CI review"]
+    B --> L["Publish reports and dashboard"]
+    J --> L
+```
 
-[**Why Superset?**](#why-superset) |
-[**Supported Databases**](#supported-databases) |
-[**Release Notes**](https://github.com/apache/superset/blob/master/RELEASING/README.md#release-notes-for-recent-releases) |
-[**Get Involved**](#get-involved) |
-[**Resources**](#resources) |
-[**Organizations Using Superset**](https://superset.apache.org/inTheWild)
+The workflow is [`.github/workflows/maintenance-scan.yml`](.github/workflows/maintenance-scan.yml). It runs only when a person dispatches it; no schedule is enabled.
 
-## Why Superset?
+### Evidence model
 
-Superset is a modern data exploration and data visualization platform. Superset can replace or augment proprietary business intelligence tools for many teams. Superset integrates well with a variety of data sources.
+At a high level, removal candidates are the eligible code left after subtracting code reachable from every known source of use:
 
-Superset provides:
+$$
+\text{Removal candidates}
+=
+\text{Eligible code}
+-
+\operatorname{Reach}\left(
+\begin{array}{l}
+\text{Application entry points} \\
+\cup\ \text{Framework entry points} \\
+\cup\ \text{Tests and UI examples} \\
+\cup\ \text{Developer tools} \\
+\cup\ \text{Public APIs} \\
+\cup\ \text{Explicit keep list}
+\end{array}
+\right)
+$$
 
-- A **no-code interface** for building charts quickly
-- A powerful, web-based **SQL Editor** for advanced querying
-- A **lightweight semantic layer** for quickly defining custom dimensions and metrics
-- Out of the box support for **nearly any SQL** database or data engine
-- A wide array of **beautiful visualizations** to showcase your data, ranging from simple bar charts to geospatial visualizations
-- Lightweight, configurable **caching layer** to help ease database load
-- Highly extensible **security roles and authentication** options
-- An **API** for programmatic customization
-- A **cloud-native architecture** designed from the ground up for scale
+Knip supplies the static part of this calculation by traversing imports and exports from configured entry points. In this proof of concept, those entry points include the production application, tests, and UI examples. Devin then checks repository context that a static traversal may not resolve, such as dynamic loading or framework registration.
 
-## Screenshots & Gifs
+Type-only findings remain diagnostic context and are not sent to Devin. The remaining candidates become the bounded batch that Devin investigates before proposing removal in a draft pull request.
 
-**Video Overview**
+Each run offers one file-coherent batch targeting 10 non-type findings. Findings from the same file remain together, and a durable ledger rotates deferred groups and skips groups with open remediation pull requests.
 
-<!-- File hosted here https://github.com/apache/superset-site/raw/lfs/superset-video-4k.mp4 -->
+The protected `maintenance-approval` environment is the cost and safety boundary. After approval, the job revalidates the repository, commit, workflow run, batch state, and SHA-256 digest. Devin must return an open draft pull request linked to the evidence, and the automation never merges it.
 
-[superset-video-1080p.webm](https://github.com/user-attachments/assets/b37388f7-a971-409c-96a7-90c4e31322e6)
+## Run a real remediation
 
-<br/>
+The canonical path is the GitHub Actions workflow. It uses live repository state, creates a real issue, and consumes Devin Agent Compute Units (ACUs) only after a reviewer approves the batch.
 
-**Large Gallery of Visualizations**
+### One-time setup
 
-<kbd><img title="Gallery" src="https://superset.apache.org/img/screenshots/gallery.jpg"/></kbd><br/>
+1. Fork this repository and enable GitHub Actions.
+2. Add two repository secrets:
+   - `DEVIN_API_KEY`: service-user API key generated in Devin for this automation.
+   - `DEVIN_ORG_ID`: organization ID shown on Devin's **Settings → Service Users** page.
+3. Create a GitHub environment named `maintenance-approval` and assign at least one required reviewer.
+4. Enable GitHub Pages and select **GitHub Actions** as its source.
+5. Optional: set `DEVIN_MAX_ACU_LIMIT`. The workflow defaults to `50` ACUs per approved session.
 
-**Craft Beautiful, Dynamic Dashboards**
+The other optional controls are `DEVIN_POLL_INTERVAL_MS` (default: `10000` milliseconds), `DEVIN_TIMEOUT_MS` (default: `3600000` milliseconds), and `MAINTENANCE_MAX_BATCHES_PER_RUN` (required value: `1` in this implementation).
 
-<kbd><img title="View Dashboards" src="https://superset.apache.org/img/screenshots/dashboard.jpg"/></kbd><br/>
+### Start with Docker
 
-**No-Code Chart Builder**
+The Docker entrypoint dispatches the real GitHub workflow; it does not substitute a simulated Devin client. Create a fine-grained GitHub token with **Actions: write** access to the fork, then run:
 
-<kbd><img title="Slice & dice your data" src="https://superset.apache.org/img/screenshots/explore.jpg"/></kbd><br/>
+```bash
+cd maintenance-automation
+cp .env.example .env
+# Set GITHUB_TOKEN, GITHUB_REPOSITORY, and MAINTENANCE_WORKFLOW_REF in .env.
 
-**Powerful SQL Editor**
+docker compose --env-file .env build live
+docker compose --env-file .env run --rm live
+```
 
-<kbd><img title="SQL Lab" src="https://superset.apache.org/img/screenshots/sql_lab.jpg"/></kbd><br/>
+The container prints the workflow URL. The scan and issue creation run in GitHub Actions, then the job waits at `maintenance-approval`. Devin credentials remain in GitHub repository secrets and are not passed to Docker.
 
-## Supported Databases
+### Or start from GitHub
 
-Superset can query data from any SQL-speaking datastore or data engine (Presto, Trino, Athena, [and more](https://superset.apache.org/docs/databases)) that has a Python DB-API driver and a SQLAlchemy dialect.
+1. Open **[Actions → Maintenance scan](https://github.com/elizabethmoonw/superset-maintainability-automation/actions/workflows/maintenance-scan.yml)**.
+2. Select **Run workflow**, choose the branch to scan, and start the run.
 
-Here are some of the major database solutions that are supported:
+### Approve and review either path
 
-<!-- SUPPORTED_DATABASES_START -->
-<p align="center">
-  <a href="https://superset.apache.org/docs/databases/supported/amazon-athena" title="Amazon Athena"><img src="docs/static/img/databases/amazon-athena.jpg" alt="Amazon Athena" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/amazon-dynamodb" title="Amazon DynamoDB"><img src="docs/static/img/databases/aws.png" alt="Amazon DynamoDB" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/amazon-redshift" title="Amazon Redshift"><img src="docs/static/img/databases/redshift.png" alt="Amazon Redshift" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-doris" title="Apache Doris"><img src="docs/static/img/databases/doris.png" alt="Apache Doris" width="103" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-drill" title="Apache Drill"><img src="docs/static/img/databases/apache-drill.png" alt="Apache Drill" width="81" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-druid" title="Apache Druid"><img src="docs/static/img/databases/druid.png" alt="Apache Druid" width="117" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-hive" title="Apache Hive"><img src="docs/static/img/databases/apache-hive.svg" alt="Apache Hive" width="44" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-impala" title="Apache Impala"><img src="docs/static/img/databases/apache-impala.png" alt="Apache Impala" width="21" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-kylin" title="Apache Kylin"><img src="docs/static/img/databases/apache-kylin.png" alt="Apache Kylin" width="44" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-pinot" title="Apache Pinot"><img src="docs/static/img/databases/apache-pinot.svg" alt="Apache Pinot" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-solr" title="Apache Solr"><img src="docs/static/img/databases/apache-solr.png" alt="Apache Solr" width="79" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/apache-spark-sql" title="Apache Spark SQL"><img src="docs/static/img/databases/apache-spark.png" alt="Apache Spark SQL" width="75" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/ascend" title="Ascend"><img src="docs/static/img/databases/ascend.webp" alt="Ascend" width="117" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/aurora-mysql-data-api" title="Aurora MySQL (Data API)"><img src="docs/static/img/databases/mysql.png" alt="Aurora MySQL (Data API)" width="77" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/aurora-postgresql-data-api" title="Aurora PostgreSQL (Data API)"><img src="docs/static/img/databases/postgresql.svg" alt="Aurora PostgreSQL (Data API)" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/azure-data-explorer" title="Azure Data Explorer"><img src="docs/static/img/databases/kusto.png" alt="Azure Data Explorer" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/azure-synapse" title="Azure Synapse"><img src="docs/static/img/databases/azure.svg" alt="Azure Synapse" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/clickhouse" title="ClickHouse"><img src="docs/static/img/databases/clickhouse.png" alt="ClickHouse" width="150" height="37" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/cloudflare-d1" title="Cloudflare D1"><img src="docs/static/img/databases/cloudflare.png" alt="Cloudflare D1" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/cockroachdb" title="CockroachDB"><img src="docs/static/img/databases/cockroachdb.png" alt="CockroachDB" width="150" height="24" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/couchbase" title="Couchbase"><img src="docs/static/img/databases/couchbase.svg" alt="Couchbase" width="150" height="35" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/cratedb" title="CrateDB"><img src="docs/static/img/databases/cratedb.svg" alt="CrateDB" width="180" height="24" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/databend" title="Databend"><img src="docs/static/img/databases/databend.png" alt="Databend" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/databricks" title="Databricks"><img src="docs/static/img/databases/databricks.png" alt="Databricks" width="152" height="24" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/denodo" title="Denodo"><img src="docs/static/img/databases/denodo.png" alt="Denodo" width="138" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/dremio" title="Dremio"><img src="docs/static/img/databases/dremio.png" alt="Dremio" width="126" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/duckdb" title="DuckDB"><img src="docs/static/img/databases/duckdb.png" alt="DuckDB" width="52" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/elasticsearch" title="Elasticsearch"><img src="docs/static/img/databases/elasticsearch.png" alt="Elasticsearch" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/exasol" title="Exasol"><img src="docs/static/img/databases/exasol.png" alt="Exasol" width="72" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/firebird" title="Firebird"><img src="docs/static/img/databases/firebird.png" alt="Firebird" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/firebolt" title="Firebolt"><img src="docs/static/img/databases/firebolt.png" alt="Firebolt" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/google-bigquery" title="Google BigQuery"><img src="docs/static/img/databases/google-big-query.svg" alt="Google BigQuery" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/google-sheets" title="Google Sheets"><img src="docs/static/img/databases/google-sheets.svg" alt="Google Sheets" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/greenplum" title="Greenplum"><img src="docs/static/img/databases/greenplum.png" alt="Greenplum" width="124" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/hologres" title="Hologres"><img src="docs/static/img/databases/hologres.png" alt="Hologres" width="44" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/ibm-db2" title="IBM Db2"><img src="docs/static/img/databases/ibm-db2.svg" alt="IBM Db2" width="91" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/ibm-netezza-performance-server" title="IBM Netezza Performance Server"><img src="docs/static/img/databases/netezza.png" alt="IBM Netezza Performance Server" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/mariadb" title="MariaDB"><img src="docs/static/img/databases/mariadb.png" alt="MariaDB" width="150" height="37" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/microsoft-sql-server" title="Microsoft SQL Server"><img src="docs/static/img/databases/msql.png" alt="Microsoft SQL Server" width="50" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/monetdb" title="MonetDB"><img src="docs/static/img/databases/monet-db.png" alt="MonetDB" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/mongodb" title="MongoDB"><img src="docs/static/img/databases/mongodb.png" alt="MongoDB" width="150" height="38" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/motherduck" title="MotherDuck"><img src="docs/static/img/databases/motherduck.png" alt="MotherDuck" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/oceanbase" title="OceanBase"><img src="docs/static/img/databases/oceanbase.svg" alt="OceanBase" width="175" height="24" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/oracle" title="Oracle"><img src="docs/static/img/databases/oraclelogo.png" alt="Oracle" width="111" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/presto" title="Presto"><img src="docs/static/img/databases/presto-og.png" alt="Presto" width="127" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/risingwave" title="RisingWave"><img src="docs/static/img/databases/risingwave.svg" alt="RisingWave" width="147" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/sap-hana" title="SAP HANA"><img src="docs/static/img/databases/sap-hana.png" alt="SAP HANA" width="137" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/sap-sybase" title="SAP Sybase"><img src="docs/static/img/databases/sybase.png" alt="SAP Sybase" width="100" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/shillelagh" title="Shillelagh"><img src="docs/static/img/databases/shillelagh.png" alt="Shillelagh" width="40" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/singlestore" title="SingleStore"><img src="docs/static/img/databases/singlestore.png" alt="SingleStore" width="150" height="31" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/snowflake" title="Snowflake"><img src="docs/static/img/databases/snowflake.svg" alt="Snowflake" width="76" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/sqlite" title="SQLite"><img src="docs/static/img/databases/sqlite.png" alt="SQLite" width="84" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/starrocks" title="StarRocks"><img src="docs/static/img/databases/starrocks.png" alt="StarRocks" width="149" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/superset-meta-database" title="Superset meta database"><img src="docs/static/img/databases/superset.svg" alt="Superset meta database" width="150" height="39" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/tdengine" title="TDengine"><img src="docs/static/img/databases/tdengine.png" alt="TDengine" width="140" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/teradata" title="Teradata"><img src="docs/static/img/databases/teradata.png" alt="Teradata" width="124" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/timescaledb" title="TimescaleDB"><img src="docs/static/img/databases/timescale.png" alt="TimescaleDB" width="150" height="36" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/trino" title="Trino"><img src="docs/static/img/databases/trino.png" alt="Trino" width="89" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/vertica" title="Vertica"><img src="docs/static/img/databases/vertica.png" alt="Vertica" width="128" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/ydb" title="YDB"><img src="docs/static/img/databases/ydb.svg" alt="YDB" width="110" height="40" /></a> &nbsp;
-  <a href="https://superset.apache.org/docs/databases/supported/yugabytedb" title="YugabyteDB"><img src="docs/static/img/databases/yugabyte.png" alt="YugabyteDB" width="150" height="26" /></a>
-</p>
-<!-- SUPPORTED_DATABASES_END -->
+1. Review the generated maintenance issue and its attached evidence. No Devin session exists yet.
+2. In the waiting workflow run, select **Review deployments**, choose `maintenance-approval`, and approve the deployment.
+3. Follow the Devin session through the issue and Actions summary.
+4. Review the resulting draft pull request, its tests, and any unresolved findings. Merge or close it manually.
 
-**A more comprehensive list of supported databases** along with the configuration instructions can be found [here](https://superset.apache.org/docs/databases).
+Re-running the same batch reuses its recorded session instead of paying for a duplicate dispatch.
 
-Want to add support for your datastore or data engine? Read more [here](https://superset.apache.org/docs/frequently-asked-questions#does-superset-work-with-insert-database-engine-here) about the technical requirements.
+## Observability: what the numbers mean
 
-## Installation and Configuration
+> **[Open the live dashboard →](https://elizabethmoonw.github.io/superset-maintainability-automation/)**
+>
+> GitHub Pages shows the latest completed workflow deployment. If its labels differ from the corrected semantics below, run the workflow once to publish the corrected dashboard schema.
 
-Try out Superset's [quickstart](https://superset.apache.org/docs/quickstart/) guide or learn about [the options for production deployments](https://superset.apache.org/docs/installation/architecture/).
+### Six-month trend
 
-## Get Involved
+The dashboard backfills one scanner snapshot per month for six months using the present scanner configuration. Those historical findings were **not actioned**: no issues, Devin sessions, or remediation pull requests were created for them. The line therefore shows how the detection surface changed over time, not automation throughput or code the system would have removed.
 
-- Ask and answer questions on [StackOverflow](https://stackoverflow.com/questions/tagged/apache-superset) using the **apache-superset** tag
-- [Join our community's Slack](https://bit.ly/join-superset-slack)
-  and please read our [Slack Community Guidelines](https://github.com/apache/superset/blob/master/CODE_OF_CONDUCT.md#slack-community-guidelines)
-- [Join our dev@superset.apache.org Mailing list](https://lists.apache.org/list.html?dev@superset.apache.org). To join, simply send an email to [dev-subscribe@superset.apache.org](mailto:dev-subscribe@superset.apache.org)
-- Follow us on social media:
-  [X](https://x.com/apachesuperset) |
-  [LinkedIn](https://www.linkedin.com/company/apache-superset) |
-  [Bluesky](https://bsky.app/profile/apachesuperset.bsky.social) |
-  [Reddit](https://reddit.com/r/apache-superset)
-- If you want to help troubleshoot GitHub Issues involving the numerous database drivers that Superset supports, please consider adding your name and the databases you have access to on the [Superset Database Familiarity Rolodex](https://docs.google.com/spreadsheets/d/1U1qxiLvOX0kBTUGME1AHHi6Ywel6ECF8xk_Qy-V9R8c/edit#gid=0)
-- Join Superset's Town Hall and [Operational Model](https://preset.io/blog/the-superset-operational-model-wants-you/) recurring meetings. Meeting info is available on the [Superset Community Calendar](https://superset.apache.org/community)
+### Latest single-scan snapshot
 
-## Contributor Guide
+The counts below all come from one corrected local scan at commit [`ec204014f5`](https://github.com/elizabethmoonw/superset-maintainability-automation/commit/ec204014f5c9f5ee0ea6b73c9dc49fbfe42d3753). They are neither cumulative nor six-month totals:
 
-Interested in contributing? Check out our
-[Developer Guide](https://superset.apache.org/developer-docs/)
-to find resources around contributing along with a detailed guide on
-how to set up a development environment.
+> **757** raw production signals → **530** signals also unused when tests and Storybook are included → **327** non-type removal candidates across **162** paths → **10** findings offered for review
 
-## Resources
+The scan that included tests and Storybook produced 541 signals, and 203 of the 530 shared signals were type-only diagnostics excluded from remediation batches. These figures describe scanner reduction and batch selection; they do not measure how many candidates Devin will ultimately propose for removal.
 
-- [Superset "In the Wild"](https://superset.apache.org/inTheWild) - see who's using Superset, and [add your organization](https://github.com/apache/superset/edit/master/RESOURCES/INTHEWILD.yaml) to the list!
-- [Feature Flags](https://superset.apache.org/docs/configuration/feature-flags) - the status of Superset's Feature Flags.
-- [Standard Roles](https://github.com/apache/superset/blob/master/RESOURCES/STANDARD_ROLES.md) - How RBAC permissions map to roles.
-- [Superset Wiki](https://github.com/apache/superset/wiki) - Tons of additional community resources: best practices, community content and other information.
-- [Superset SIPs](https://github.com/orgs/apache/projects/170) - The status of Superset's SIPs (Superset Improvement Proposals) for both consensus and implementation status.
+Each workflow run also writes a GitHub Actions summary and uploads the normalized reports used to build the dashboard. The dashboard answers four leadership questions:
 
-Understanding the Superset Points of View
+| Question                           | Metric                                     | Meaning                                                                                                                                                                   |
+| ---------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Is the detection surface changing? | Non-type review paths over time            | Distinct paths containing shared file, export, or enum-member signals under one consistent scanner configuration. This measures candidate volume, not validated removals. |
+| Is the system moving work?         | Batches offered and draft PRs produced     | Workflow-created units that reached the approval and remediation stages.                                                                                                  |
+| Are humans accepting the work?     | Merged versus closed-unmerged workflow PRs | Final outcomes only for PRs created by this automation. A historical hand-picked PR is evidence that the problem exists, not evidence of system performance.              |
+| Is the system healthy?             | Run state and failure signals              | Whether scans, approval, Devin polling, and PR verification completed or failed.                                                                                          |
 
-- [The Case for Dataset-Centric Visualization](https://preset.io/blog/dataset-centric-visualization/)
-- [Understanding the Superset Semantic Layer](https://preset.io/blog/understanding-superset-semantic-layer/)
+The backfill is reconstructed with present dependencies and configuration, so dependency or build-system drift can affect historical snapshots. Effectiveness measures—precision, code removed, engineering time saved, and pull-request acceptance—require completed workflow runs and final human decisions.
 
-- Getting Started with Superset
-  - [Superset in 2 Minutes using Docker Compose](https://superset.apache.org/docs/installation/docker-compose#installing-superset-locally-using-docker-compose)
-  - [Installing Database Drivers](https://superset.apache.org/docs/configuration/databases#installing-database-drivers)
-  - [Building New Database Connectors](https://preset.io/blog/building-database-connector/)
-  - [Create Your First Dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard/)
-  - [Comprehensive Tutorial for Contributing Code to Apache Superset
-    ](https://preset.io/blog/tutorial-contributing-code-to-apache-superset/)
-- [Resources to master Superset by Preset](https://preset.io/resources/)
+## Repository layout
 
-- Deploying Superset
+| Path                                                                                  | Responsibility                                                                                   |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [`.github/workflows/maintenance-scan.yml`](.github/workflows/maintenance-scan.yml) | Event, issue creation, approval gate, Devin lifecycle, artifact publication, and PR verification |
+| [`src/cli.ts`](maintenance-automation/src/cli.ts)                                                            | Reproducible Knip scans and normalized reports                                                   |
+| [`src/generateActionableBatch.ts`](maintenance-automation/src/generateActionableBatch.ts)                    | Evidence intersection, diagnostic separation, and run artifacts                                  |
+| [`src/batchLedger.ts`](maintenance-automation/src/batchLedger.ts)                                            | Batch rotation and durable attempt state                                                         |
+| [`src/devinApi.ts`](maintenance-automation/src/devinApi.ts)                                                  | Devin API session creation, polling, prompt construction, and status artifacts                   |
+| [`src/dispatchWorkflow.ts`](maintenance-automation/src/dispatchWorkflow.ts)                                  | Authenticated GitHub workflow dispatch used by the live Docker entrypoint                        |
+| [`src/observabilityBackfill.ts`](maintenance-automation/src/observabilityBackfill.ts)                        | Historical consistent-ruler backfill                                                             |
+| [`src/observabilityDashboard.ts`](maintenance-automation/src/observabilityDashboard.ts)                      | Static dashboard generation                                                                      |
+| [`Dockerfile`](maintenance-automation/Dockerfile) and [`compose.yml`](maintenance-automation/compose.yml)                           | Reproducible live dispatcher and containerized test runner                                       |
+| [`reports/`](maintenance-automation/reports/)                                                                | Example scan, batch, status, and dashboard artifacts                                             |
 
-  - [Official Docker image](https://hub.docker.com/r/apache/superset)
-  - [Helm Chart](https://github.com/apache/superset/tree/master/helm/superset)
+## Reproduce the scanner locally (optional)
 
-- Recordings of Past [Superset Community Events](https://preset.io/events)
+With Docker:
 
-  - [Mixed Time Series Charts](https://preset.io/events/mixed-time-series-visualization-in-superset-workshop/)
-  - [How the Bing Team Customized Superset for the Internal Self-Serve Data & Analytics Platform](https://preset.io/events/how-the-bing-team-heavily-customized-superset-for-their-internal-data/)
-  - [Live Demo: Visualizing MongoDB and Pinot Data using Trino](https://preset.io/events/2021-04-13-visualizing-mongodb-and-pinot-data-using-trino/)
-  - [Introduction to the Superset API](https://preset.io/events/introduction-to-the-superset-api/)
-  - [Building a Database Connector for Superset](https://preset.io/events/2021-02-16-building-a-database-connector-for-superset/)
+```bash
+cd maintenance-automation
+docker compose --profile scan run --rm --build scan
+```
 
-- Visualizations
+The scan image installs the pinned frontend and automation dependencies, runs both scanner configurations, and writes the generated evidence to `maintenance-automation/reports/` through a bind mount.
 
-  - [Creating Viz Plugins](https://superset.apache.org/docs/contributing/creating-viz-plugins/)
-  - [Managing and Deploying Custom Viz Plugins](https://medium.com/nmc-techblog/apache-superset-manage-custom-viz-plugins-in-production-9fde1a708e55)
-  - [Why Apache Superset is Betting on Apache ECharts](https://preset.io/blog/2021-4-1-why-echarts/)
+Without Docker:
 
-- [Superset API](https://superset.apache.org/docs/rest-api)
+### Prerequisites
 
-<!--
-  The OSS Insight "Repo Activity" widget (https://next.ossinsight.io/) was
-  intentionally removed. This README is rendered on the ASF-hosted website
-  (superset.apache.org), so its contents are subject to ASF's third-party
-  content and CSP rules. OSS Insight has no Data Processing Agreement (DPA)
-  with the ASF, so we cannot embed its images/widgets here. Do not re-add it.
--->
+- Git
+- Node.js `v24.16.0`, matching [`superset-frontend/.nvmrc`](superset-frontend/.nvmrc)
+- npm
+- Enough memory and disk space to install and scan the Superset frontend
 
-<!-- telemetry/analytics pixel: -->
-<img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=bc1c90cd-bc04-4e11-8c7b-289fb2839492" />
+From the repository root:
+
+```bash
+cd maintenance-automation
+npm ci
+npm test -- --runInBand
+npm run build
+
+cd ../superset-frontend
+npm ci
+
+cd ../maintenance-automation
+npm run scan:both
+npm run compare
+```
+
+These commands reproduce the scanner evidence and comparison in `reports/`. They do not create a GitHub issue or start Devin; use the GitHub Actions path above for a real remediation.
+
+To generate a local batch after the scans:
+
+```bash
+export MAINTENANCE_STARTED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+export GITHUB_RUN_ID="local-run"
+export GITHUB_REPOSITORY="elizabethmoonw/superset-maintainability-automation"
+export GITHUB_SHA="$(git -C .. rev-parse HEAD)"
+export MAINTENANCE_WORKFLOW_URL="local://maintenance-scan"
+export MAINTENANCE_ARTIFACT_NAME="maintenance-scan-local"
+npm run batch:generate
+```
+
+Inspect these outputs:
+
+- `reports/actionable-batch.json`: selected and deferred finding groups
+- `reports/run-status.json`: workflow-compatible state and immutable identifiers
+- `reports/maintenance-summary.md`: concise technical summary
+- `reports/remediation-issue.md`: issue body that the GitHub workflow publishes
+
+## Build the dashboard locally
+
+From `maintenance-automation/`, after installing both automation and frontend dependencies:
+
+```bash
+npm run observability:site
+```
+
+Open `reports/site/index.html` in a browser. This command backfills six months of scanner history and regenerates the dashboard; it can take several minutes because it scans historical commits.
+
+## Test and verification commands
+
+From `maintenance-automation/`:
+
+```bash
+npm test -- --runInBand
+npm run build
+npm run scan:both
+npm run compare
+npm run observability:site
+```
+
+The implemented Jest suite contains 168 tests covering parsing, filtering, batching, ledger behavior, GitHub workflow dispatch, Devin API behavior, PR validation inputs, observability data, backfill, and dashboard generation. Run the same suite in Docker with:
+
+```bash
+docker compose --profile test run --rm --build test
+```
+
+## Known limitations and next steps
+
+The proof of concept deliberately keeps the control plane small, but these gaps matter before production use:
+
+1. Run and record a corrected end-to-end workflow that produces a Devin draft PR; retain its issue, Actions run, PR, tests, and human outcome as demo evidence.
+2. Add a scheduled monthly trigger after the approval, cost, and failure-handling behavior has been validated.
+3. Add runtime import or coverage evidence to reduce uncertainty from dynamic loading.
+4. Measure precision after human review: verified findings divided by investigated findings.
+5. Measure delivered impact after merges: files or exports safely removed, review time, cycle time, and CI outcomes.
+6. Add entry points for other repository tooling that may reference frontend code.
+7. Apply repository branch protections and required CI checks to Devin PRs.
+
+## Upstream project
+
+This repository is based on [Apache Superset](https://github.com/apache/superset). The maintenance automation is a project-specific addition and is not an Apache Superset feature.
