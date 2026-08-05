@@ -58,7 +58,7 @@ At a high level, removal candidates are the eligible code left after subtracting
 =
 \text{Eligible code}
 -
-\operatorname{Reach}\left(
+\mathrm{Reach}\left(
 \begin{array}{l}
 \text{Application entry points} \\
 \cup\ \text{Framework entry points} \\
