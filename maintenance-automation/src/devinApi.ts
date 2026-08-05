@@ -606,6 +606,19 @@ function isTerminalStatus(
   );
 }
 
+function shouldTerminateDeliveredSession(session: DevinSession): boolean {
+  if (session.status !== "running") {
+    return false;
+  }
+  if (session.statusDetail === "finished") {
+    return true;
+  }
+  return (
+    session.statusDetail === "waiting_for_user" &&
+    session.pullRequests.length === 1
+  );
+}
+
 function defaultSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -643,6 +656,12 @@ export async function pollDevinSession(
     }
     if (isTerminalStatus(session.status)) {
       return { session, timedOut: false };
+    }
+    if (shouldTerminateDeliveredSession(session)) {
+      return {
+        session: await client.terminateSession(sessionId),
+        timedOut: false,
+      };
     }
     if (now() >= deadline) {
       try {

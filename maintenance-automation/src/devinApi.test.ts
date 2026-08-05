@@ -581,6 +581,84 @@ test("polling stops at documented exit status and captures the pull request", as
   );
 });
 
+test.each(["waiting_for_user", "finished"] as const)(
+  "polling terminates a delivered session in %s state",
+  async (statusDetail) => {
+    const pullRequests = [
+      {
+        pr_state: "open",
+        pr_url: "https://github.com/example/superset/pull/9",
+      },
+    ];
+    const fetchMock = jest
+      .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+      .mockResolvedValueOnce(
+        sessionResponse("running", pullRequests, {
+          status_detail: statusDetail,
+        }),
+      )
+      .mockResolvedValueOnce(sessionResponse("exit", pullRequests));
+    const client = new DevinApiClient(
+      { apiKey: "token", organizationId: "org-example" },
+      fetchMock,
+    );
+
+    const result = await pollDevinSession(client, "devin-session-1", {
+      timeoutMilliseconds: 100,
+      intervalMilliseconds: 10,
+      now: jest.fn().mockReturnValue(0),
+      sleep: async () => undefined,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        timedOut: false,
+        session: expect.objectContaining({
+          status: "exit",
+          pullRequests: [
+            expect.objectContaining({
+              url: "https://github.com/example/superset/pull/9",
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://api.devin.ai/v3/organizations/org-example/sessions/devin-session-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  },
+);
+
+test("polling keeps waiting when Devin needs input before producing a pull request", async () => {
+  const fetchMock = jest
+    .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+    .mockResolvedValue(
+      sessionResponse("running", [], {
+        status_detail: "waiting_for_user",
+      }),
+    );
+  const client = new DevinApiClient(
+    { apiKey: "token", organizationId: "org-example" },
+    fetchMock,
+  );
+
+  const result = await pollDevinSession(client, "devin-session-1", {
+    timeoutMilliseconds: 100,
+    intervalMilliseconds: 10,
+    now: jest.fn().mockReturnValueOnce(0).mockReturnValueOnce(100),
+    sleep: async () => undefined,
+  });
+
+  expect(result.timedOut).toBe(true);
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://api.devin.ai/v3/organizations/org-example/sessions/devin-session-1",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
 test("creation acknowledgement flows through polling to a pull request", async () => {
   const fetchMock = jest
     .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
