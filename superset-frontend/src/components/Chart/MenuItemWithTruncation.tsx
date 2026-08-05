@@ -17,20 +17,10 @@
  * under the License.
  */
 
-import { ReactNode, CSSProperties, useCallback } from 'react';
+import { ReactNode, CSSProperties } from 'react';
 import { truncationCSS, useCSSTextTruncation } from '@superset-ui/core';
 import { css, useTheme } from '@apache-superset/core/theme';
-import { Menu, type ItemType } from '@superset-ui/core/components/Menu';
 import { Flex, Tooltip } from '@superset-ui/core/components';
-import { MenuItemProps } from 'antd';
-
-export type MenuItemWithTruncationProps = {
-  tooltipText: ReactNode;
-  children: ReactNode;
-  onClick?: MenuItemProps['onClick'];
-  style?: CSSProperties;
-  menuKey?: string;
-};
 
 export const TruncatedMenuLabel = ({
   tooltipText,
@@ -53,84 +43,6 @@ export const TruncatedMenuLabel = ({
         {children}
       </div>
     </Tooltip>
-  );
-};
-
-export const useMenuItemWithTruncation = () => {
-  const getMenuItemWithTruncation = useCallback(
-    ({
-      tooltipText,
-      children,
-      onClick,
-      style,
-      key,
-      disabled = false,
-      danger = false,
-      ...restProps
-    }: {
-      tooltipText: ReactNode;
-      children: ReactNode;
-      onClick?: (e: any) => void;
-      style?: CSSProperties;
-      key: string;
-      disabled?: boolean;
-      danger?: boolean;
-      [key: string]: any;
-    }): ItemType => ({
-      key,
-      onClick,
-      style,
-      disabled,
-      danger,
-      label: (
-        <TruncatedMenuLabel tooltipText={tooltipText}>
-          {children}
-        </TruncatedMenuLabel>
-      ),
-      ...restProps,
-    }),
-    [],
-  );
-
-  return getMenuItemWithTruncation;
-};
-
-export const MenuItemWithTruncation = ({
-  tooltipText,
-  children,
-  onClick,
-  style,
-  menuKey,
-}: MenuItemWithTruncationProps) => {
-  const [itemRef, itemIsTruncated] = useCSSTextTruncation<HTMLDivElement>();
-
-  return (
-    <Menu.Item
-      css={css`
-        display: flex;
-        line-height: 1.5em;
-      `}
-      key={menuKey}
-      onClick={onClick}
-      style={style}
-    >
-      <Tooltip
-        title={itemIsTruncated ? tooltipText : null}
-        css={css`
-          max-width: 200px;
-        `}
-      >
-        <div
-          ref={itemRef}
-          css={css`
-            max-width: 100%;
-            ${truncationCSS};
-          `}
-        >
-          {children}
-        </div>
-      </Tooltip>
-    </Menu.Item>
   );
 };
 

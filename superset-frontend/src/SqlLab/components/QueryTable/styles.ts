@@ -23,13 +23,6 @@ export const StaticPosition = css`
   position: static;
 `;
 
-export const verticalAlign = css`
-  vertical-align: 0em;
-  svg {
-    height: 0.9em;
-  }
-`;
-
 export const StyledTooltip = styled(IconTooltip)`
   padding-right: ${({ theme }) => theme.sizeUnit * 2}px;
   span {
