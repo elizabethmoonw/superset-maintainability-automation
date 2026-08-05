@@ -53,7 +53,7 @@ The workflow is [`.github/workflows/maintenance-scan.yml`](.github/workflows/mai
 
 At a high level, removal candidates are the eligible code left after subtracting code reachable from every known source of use:
 
-$$
+```math
 \text{Removal candidates}
 =
 \text{Eligible code}
@@ -68,7 +68,7 @@ $$
 \cup\ \text{Explicit keep list}
 \end{array}
 \right)
-$$
+```
 
 Knip supplies the static part of this calculation by traversing imports and exports from configured entry points. In this proof of concept, those entry points include the production application, tests, and UI examples. Devin then checks repository context that a static traversal may not resolve, such as dynamic loading or framework registration.
 
